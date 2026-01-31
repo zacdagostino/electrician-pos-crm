@@ -1,4 +1,5 @@
 import AppShell from "@/components/AppShell";
+import QuotesTabs from "@/components/QuotesTabs";
 import { requireOrg } from "@/lib/authz";
 import { db } from "@/lib/db";
 
@@ -6,9 +7,30 @@ export default async function QuotesPage() {
   const { session, orgId } = await requireOrg();
   const org = await db.org.findUnique({ where: { id: orgId } });
   const quotes = await db.quote.findMany({
-    where: { orgId },
+    where: { orgId, status: { not: "draft" } },
     orderBy: { createdAt: "desc" },
   });
+
+  const drafts = await db.quote.findMany({ where: { orgId, status: "draft" }, orderBy: { updatedAt: "desc" } });
+
+  // Map to simple serializable shapes
+  const serialQuotes = quotes.map((q) => ({
+    id: q.id,
+    customerName: q.customerName,
+    siteLine1: q.siteLine1,
+    status: q.status,
+    total: Number(q.total),
+    createdAt: q.createdAt.toISOString(),
+  }));
+
+  const serialDrafts = drafts.map((q) => ({
+    id: q.id,
+    customerName: q.customerName,
+    siteLine1: q.siteLine1,
+    total: Number(q.total ?? 0),
+    createdAt: q.createdAt.toISOString(),
+    updatedAt: q.updatedAt?.toISOString() ?? null,
+  }));
 
   return (
     <AppShell
@@ -41,45 +63,11 @@ export default async function QuotesPage() {
 
         <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
           <header className="mb-4">
-            <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Recent quotes</p>
+            <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Quotes</p>
           </header>
-          <div className="overflow-hidden rounded-xl border border-slate-800">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-slate-950 text-xs uppercase tracking-[0.2em] text-slate-500">
-                <tr>
-                  <th className="px-4 py-3">Customer</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Total</th>
-                  <th className="px-4 py-3">Created</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800">
-                {quotes.length ? (
-                  quotes.map((quote) => (
-                    <tr key={quote.id} className="bg-slate-950/40">
-                      <td className="px-4 py-3">
-                        <p className="font-semibold text-slate-100">{quote.customerName}</p>
-                        <p className="text-xs text-slate-500">{quote.siteLine1}</p>
-                      </td>
-                      <td className="px-4 py-3 text-slate-300">{quote.status}</td>
-                      <td className="px-4 py-3 text-slate-300">
-                        ${Number(quote.total).toFixed(2)}
-                      </td>
-                      <td className="px-4 py-3 text-slate-400">
-                        {quote.createdAt.toLocaleDateString()}
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td className="px-4 py-6 text-center text-sm text-slate-500" colSpan={4}>
-                      No quotes yet. Create your first quote.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+
+          <QuotesTabs drafts={serialDrafts} quotes={serialQuotes} />
+
         </section>
       </div>
     </AppShell>

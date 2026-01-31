@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
 type PricingItem = {
   id: string;
@@ -47,7 +47,23 @@ type QuoteExtra = {
   amount: number;
 };
 
+type CustomerResult = {
+  id: string;
+  name: string;
+  email?: string | null;
+  phone?: string | null;
+};
+
 const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
+
+const formatRelativeTime = (timestamp: number) => {
+  const diff = Date.now() - timestamp;
+  if (diff < 5000) return "Saved just now";
+  if (diff < 60000) return `Saved ${Math.floor(diff / 1000)}s ago`;
+  if (diff < 3600000) return `Saved ${Math.floor(diff / 60000)}m ago`;
+  if (diff < 86400000) return `Saved ${Math.floor(diff / 3600000)}h ago`;
+  return `Saved ${new Date(timestamp).toLocaleDateString()}`;
+};
 
 const computeTotals = (
   items: QuoteItem[],
@@ -86,6 +102,12 @@ export default function QuoteBuilder() {
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
+  const [customerId, setCustomerId] = useState<string | null>(null);
+  const [customerSearch, setCustomerSearch] = useState("");
+  const customerNameRef = useRef<HTMLInputElement | null>(null);
+  const siteLine1Ref = useRef<HTMLInputElement | null>(null);
+  const [customerResults, setCustomerResults] = useState<CustomerResult[]>([]);
+  const [customerLoading, setCustomerLoading] = useState(false);
   const [siteLine1, setSiteLine1] = useState("");
   const [siteLine2, setSiteLine2] = useState("");
   const [siteSuburb, setSiteSuburb] = useState("");
@@ -111,6 +133,28 @@ export default function QuoteBuilder() {
     Record<string, { description: string; amount: string }>
   >({});
   const [extraOpen, setExtraOpen] = useState<Record<string, boolean>>({});
+
+  // Draft state for autosave
+  const [draftId, setDraftId] = useState<string | null>(null);
+  const [draftSaving, setDraftSaving] = useState(false);
+  const [draftSavedAt, setDraftSavedAt] = useState<number | null>(null);
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const [savedTickVisible, setSavedTickVisible] = useState(false);
+  const savedTickTimeoutRef = useRef<number | null>(null);
+  const [nowTick, setNowTick] = useState(0); // used to refresh relative time display
+
+  useEffect(() => {
+    const interval = setInterval(() => setNowTick((v) => v + 1), 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (savedTickTimeoutRef.current) window.clearTimeout(savedTickTimeoutRef.current);
+    };
+  }, []);
+
+  const searchParams = useSearchParams();
 
   useEffect(() => {
     const loadProfile = async () => {
@@ -142,6 +186,45 @@ export default function QuoteBuilder() {
           gstRate: Number(nextProfile.gstRate),
         });
         setTravelSurchargeApplied(Boolean(nextProfile.travelSurchargeEnabled));
+
+        // If a draftId was passed in the URL, fetch and load it
+        const paramDraft = searchParams?.get?.("draftId");
+        if (paramDraft) {
+          try {
+            const dresp = await fetch(`/api/quotes/drafts/${paramDraft}`);
+            if (dresp.ok) {
+              const pd = await dresp.json();
+              const draft = pd?.draft;
+              if (draft) {
+                setDraftId(draft.id);
+                setCustomerName(draft.customerName ?? "");
+                setCustomerEmail(draft.customerEmail ?? "");
+                setCustomerPhone(draft.customerPhone ?? "");
+                setSiteLine1(draft.siteLine1 ?? "");
+                setSiteLine2(draft.siteLine2 ?? "");
+                setSiteSuburb(draft.siteSuburb ?? "");
+                setSiteState(draft.siteState ?? "");
+                setSitePostcode(draft.sitePostcode ?? "");
+                setNotes(draft.notes ?? "");
+                setTravelSurchargeApplied(Boolean(draft.travelSurchargeApplied));
+                setDraftSavedAt(draft.updatedAt ? Date.parse(draft.updatedAt) : Date.now());
+
+                // Load items
+                const mappedItems: QuoteItem[] = (draft.items ?? []).map((it: any) => ({
+                  id: it.id,
+                  name: it.name,
+                  type: it.type as QuoteItem["type"],
+                  quantity: Number(it.quantity ?? 1),
+                  unitPrice: Number(it.unitPrice ?? 0),
+                  pricingItemId: it.pricingItemId ?? undefined,
+                }));
+                setItems(mappedItems);
+              }
+            }
+          } catch (err) {
+            console.warn("Unable to load draft", err);
+          }
+        }
       } catch (err) {
         setError("Unable to load pricing profile.");
       } finally {
@@ -150,7 +233,38 @@ export default function QuoteBuilder() {
     };
 
     void loadProfile();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const query = customerSearch.trim();
+    if (query.length < 2) {
+      setCustomerResults([]);
+      setCustomerLoading(false);
+      return;
+    }
+
+    setCustomerLoading(true);
+    const handle = setTimeout(async () => {
+      try {
+        const response = await fetch(
+          `/api/customers/search?q=${encodeURIComponent(query)}`
+        );
+        const payload = await response.json();
+        if (response.ok) {
+          setCustomerResults(payload.customers ?? []);
+        } else {
+          setCustomerResults([]);
+        }
+      } catch (err) {
+        setCustomerResults([]);
+      } finally {
+        setCustomerLoading(false);
+      }
+    }, 200);
+
+    return () => clearTimeout(handle);
+  }, [customerSearch]);
 
 
   const availableItems = useMemo(() => {
@@ -172,6 +286,185 @@ export default function QuoteBuilder() {
       unitPrice: extra.amount,
     }))
   );
+
+  // Create a new draft on the server
+  const createDraft = async () => {
+    setDraftSaving(true);
+    try {
+      const body = {
+        customerId,
+        customerName,
+        customerEmail,
+        customerPhone,
+        siteLine1,
+        siteLine2,
+        siteSuburb,
+        siteState,
+        sitePostcode,
+        notes,
+        travelSurchargeApplied,
+        items: [
+          ...items.map((item) => ({
+            name: item.name,
+            type: item.type,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            pricingItemId: item.pricingItemId,
+          })),
+          ...extraLineItems.map((extra) => ({
+            name: extra.name,
+            type: extra.type,
+            quantity: extra.quantity,
+            unitPrice: extra.unitPrice,
+          })),
+        ],
+      };
+
+      const response = await fetch("/api/quotes/drafts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        let msg = response.statusText ?? "Unable to create draft";
+        try {
+          const body = await response.json().catch(() => null);
+          if (body?.error) msg = body.error;
+        } catch (err) {
+          // ignore
+        }
+        setDraftError(msg);
+        return null;
+      }
+      const payload = await response.json().catch(() => null);
+      if (payload?.draftId) {
+        setDraftError(null);
+        setDraftId(payload.draftId);
+        setDraftSavedAt(Date.now());
+
+        // show a tick briefly
+        setSavedTickVisible(true);
+        if (savedTickTimeoutRef.current) window.clearTimeout(savedTickTimeoutRef.current);
+        savedTickTimeoutRef.current = window.setTimeout(() => setSavedTickVisible(false), 2500);
+
+        return payload.draftId;
+      }
+      setDraftError("Unable to create draft");
+      return null;
+    } catch (err) {
+      // ignore: draft creation failure shouldn't block the UX
+      console.warn("createDraft error", err);
+      return null;
+    } finally {
+      setDraftSaving(false);
+    }
+  };
+
+  // Update an existing draft (debounced by the caller)
+  const updateDraft = async (id: string) => {
+    setDraftSaving(true);
+    try {
+      const body = {
+        customerId,
+        customerName,
+        customerEmail,
+        customerPhone,
+        siteLine1,
+        siteLine2,
+        siteSuburb,
+        siteState,
+        sitePostcode,
+        notes,
+        travelSurchargeApplied,
+        items: [
+          ...items.map((item) => ({
+            name: item.name,
+            type: item.type,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            pricingItemId: item.pricingItemId,
+          })),
+          ...extraLineItems.map((extra) => ({
+            name: extra.name,
+            type: extra.type,
+            quantity: extra.quantity,
+            unitPrice: extra.unitPrice,
+          })),
+        ],
+      };
+
+      const response = await fetch(`/api/quotes/drafts/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      if (response.ok) {
+        setDraftError(null);
+        setDraftSavedAt(Date.now());
+
+        // show a tick briefly
+        setSavedTickVisible(true);
+        if (savedTickTimeoutRef.current) window.clearTimeout(savedTickTimeoutRef.current);
+        savedTickTimeoutRef.current = window.setTimeout(() => setSavedTickVisible(false), 2500);
+      } else {
+        let msg = response.statusText ?? "Unable to save draft";
+        try {
+          const body = await response.json().catch(() => null);
+          if (body?.error) msg = body.error;
+        } catch (err) {
+          // ignore
+        }
+        setDraftError(msg);
+      }
+    } catch (err) {
+      console.warn("updateDraft error", err);
+    } finally {
+      setDraftSaving(false);
+    }
+  };
+
+  const deleteDraft = async (id: string | null) => {
+    if (!id) return;
+    try {
+      await fetch(`/api/quotes/drafts/${id}`, { method: "DELETE" });
+      setDraftId(null);
+    } catch (err) {
+      console.warn("deleteDraft error", err);
+    }
+  };
+
+  // Create draft when profile loads (so we have pricing defaults) or on mount if not already created
+  useEffect(() => {
+    if (!draftId && !loading && profile) {
+      void createDraft();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile, loading]);
+
+  // Auto-save draft when important fields change (debounced). If we don't yet have a draft, create one.
+  useEffect(() => {
+    if (loading) return;
+
+    const handle = setTimeout(async () => {
+      try {
+        if (!draftId) {
+          const id = await createDraft();
+          if (id) {
+            await updateDraft(id);
+          }
+        } else {
+          await updateDraft(draftId);
+        }
+      } catch (err) {
+        console.warn("autosave error", err);
+        setDraftError("Autosave failed");
+      }
+    }, 900);
+
+    return () => clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerName, customerEmail, customerPhone, siteLine1, siteLine2, siteSuburb, siteState, sitePostcode, notes, travelSurchargeApplied, items, extrasByItem]);
 
   const derivedProfile =
     profile && travelSurchargeOverride.trim()
@@ -317,15 +610,42 @@ export default function QuoteBuilder() {
     });
   };
 
+  const handleCustomerSelect = (customer: CustomerResult) => {
+    setCustomerId(customer.id);
+    setCustomerName(customer.name ?? "");
+    setCustomerEmail(customer.email ?? "");
+    setCustomerPhone(customer.phone ?? "");
+    setCustomerSearch(customer.name ?? "");
+    setCustomerResults([]);
+  };
+
+  const clearCustomerSelection = () => {
+    setCustomerId(null);
+    setCustomerResults([]);
+  };
+
   const saveQuote = async () => {
-    setSaving(true);
+    // Client-side validation
     setError(null);
+    if (!customerName.trim()) {
+      setError("Customer name is required.");
+      customerNameRef.current?.focus();
+      return;
+    }
+    if (!siteLine1.trim()) {
+      setError("Site address is required.");
+      siteLine1Ref.current?.focus();
+      return;
+    }
+
+    setSaving(true);
 
     try {
       const response = await fetch("/api/quotes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          customerId,
           customerName,
           customerEmail,
           customerPhone,
@@ -354,15 +674,31 @@ export default function QuoteBuilder() {
         }),
       });
 
-      const payload = await response.json();
+      // Try to parse server JSON safely
+      let payload: any = null;
+      try {
+        payload = await response.json();
+      } catch (parseErr) {
+        payload = null;
+      }
+
       if (!response.ok) {
-        setError(payload?.error ?? "Unable to save quote.");
+        setError(payload?.error ?? `Server error (${response.status} ${response.statusText})`);
         return;
+      }
+
+      // Delete the draft if one exists (best-effort)
+      if (draftId) {
+        try {
+          await deleteDraft(draftId);
+        } catch (err) {
+          console.warn("Failed to delete draft after save", err);
+        }
       }
 
       router.push("/quotes");
     } catch (err) {
-      setError("Unable to save quote.");
+      setError("Unable to save quote. Please check your connection and try again.");
     } finally {
       setSaving(false);
     }
@@ -557,44 +893,60 @@ export default function QuoteBuilder() {
             <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Quote items</p>
             <div className="mt-4 space-y-3">
               {travelSurchargeAmount > 0 ? (
-                <div className="rounded-xl border border-emerald-400/40 bg-emerald-500/10 px-4 py-3 text-sm text-slate-100">
+                <div className="rounded-xl border border-emerald-400/40 bg-emerald-500/10 px-3 py-2 text-xs text-slate-100 sm:px-4 sm:py-3 sm:text-sm">
+                  {(() => {
+                    const parsedOverride = Number(travelSurchargeOverride);
+                    const hasOverride =
+                      travelSurchargeOverride.trim().length > 0 && !Number.isNaN(parsedOverride);
+                    const effectiveTravelSurcharge = hasOverride
+                      ? parsedOverride
+                      : travelSurchargeAmount;
+
+                    return (
+                      <>
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <p className="text-sm font-semibold text-emerald-100">Travel surcharge</p>
-                      <p className="text-xs text-emerald-200/80">Auto-added</p>
+                      <p className="text-[10px] text-emerald-200/80 sm:text-xs">Auto-added</p>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setTravelSurchargeApplied(false)}
+                      className="rounded-full border border-rose-400/70 px-2 py-0.5 text-[9px] uppercase tracking-[0.2em] text-rose-200 sm:text-[10px]"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-emerald-100 sm:text-sm">
+                    <div className="inline-flex items-center gap-2 rounded-lg border border-emerald-400/30 bg-emerald-500/10 px-2 py-1">
+                      <span className="text-[10px] uppercase tracking-[0.2em] text-emerald-200/70">
+                        Qty
+                      </span>
+                      <span>1</span>
+                    </div>
+                    <div className="inline-flex items-center gap-2 rounded-lg border border-emerald-400/30 bg-emerald-500/10 px-2 py-1">
+                      <span className="text-[10px] uppercase tracking-[0.2em] text-emerald-200/70">
+                        Price
+                      </span>
                       <input
+                        aria-label="Travel surcharge price"
                         value={travelSurchargeOverride}
                         onChange={(event) => setTravelSurchargeOverride(event.target.value)}
                         placeholder={formatCurrency(travelSurchargeAmount)}
-                        className="w-24 rounded-lg border border-emerald-400/50 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-100 placeholder:text-emerald-200/70"
+                        inputMode="decimal"
+                        className="w-20 bg-transparent text-[11px] text-emerald-100 placeholder:text-emerald-200/70 outline-none sm:w-24 sm:text-sm"
                       />
-                      <button
-                        type="button"
-                        onClick={() => setTravelSurchargeApplied(false)}
-                        className="rounded-full border border-rose-400/70 px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] text-rose-200"
-                      >
-                        Remove
-                      </button>
+                    </div>
+                    <div className="inline-flex items-center gap-2 rounded-lg border border-emerald-400/30 bg-emerald-500/10 px-2 py-1">
+                      <span className="text-[10px] uppercase tracking-[0.2em] text-emerald-200/70">
+                        Total
+                      </span>
+                      <span>{formatCurrency(effectiveTravelSurcharge)}</span>
                     </div>
                   </div>
-                  <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                    <div className="rounded-lg border border-emerald-400/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-100">
-                      Qty 1
-                    </div>
-                    <div className="rounded-lg border border-emerald-400/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-100">
-                      {formatCurrency(
-                        travelSurchargeOverride
-                          ? Number(travelSurchargeOverride)
-                          : travelSurchargeAmount
-                      )}
-                    </div>
-                    <div className="flex items-center justify-between rounded-lg border border-emerald-400/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-100">
-                      <span>Line total</span>
-                      <span>{formatCurrency(travelSurchargeAmount)}</span>
-                    </div>
-                  </div>
+                      </>
+                    );
+                  })()}
                 </div>
               ) : (
                 <button
@@ -612,130 +964,159 @@ export default function QuoteBuilder() {
                   return (
                     <div
                       key={item.id}
-                      className="rounded-xl border border-slate-800 bg-slate-950 px-4 py-3"
+                      className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 sm:px-4 sm:py-3"
                     >
                       <div className="flex items-center justify-between gap-3">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-semibold text-slate-100">
                             {item.name}
                           </p>
-                          <p className="text-xs text-slate-500">{item.type}</p>
+                          <p className="text-[10px] text-slate-500 sm:text-xs">{item.type}</p>
                         </div>
                         <button
                           type="button"
                           onClick={() => removeItem(item.id)}
-                          className="text-xs uppercase tracking-[0.2em] text-rose-300"
+                          className="text-[10px] uppercase tracking-[0.2em] text-rose-300 sm:text-xs"
                         >
                           Remove
                         </button>
                       </div>
-                      <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                        <input
-                          value={item.quantity}
-                          onChange={(event) =>
-                            updateItem(item.id, { quantity: Number(event.target.value) })
-                          }
-                          className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100"
-                        />
-                        <input
-                          value={item.unitPrice}
-                          onChange={(event) =>
-                            updateItem(item.id, { unitPrice: Number(event.target.value) })
-                          }
-                          className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100"
-                        />
-                        <div className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-200">
-                          <span>Item total</span>
-                          <span>
-                            {formatCurrency(item.quantity * item.unitPrice + extrasSum)}
+                      <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-200 sm:text-sm">
+                        <label className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950 px-2 py-1">
+                          <span className="text-[10px] uppercase tracking-[0.2em] text-slate-500 sm:text-xs">
+                            Qty.
                           </span>
+                          <input
+                            value={item.quantity}
+                            onChange={(event) =>
+                              updateItem(item.id, { quantity: Number(event.target.value) })
+                            }
+                            inputMode="numeric"
+                            size={Math.max(String(item.quantity).length, 1)}
+                            style={{ width: `${Math.max(String(item.quantity).length, 2)}ch` }}
+                            className="flex-none min-w-[2ch] w-auto bg-transparent text-xs text-slate-100 outline-none sm:text-sm"
+                          />
+                        </label>
+                        <label className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950 px-2 py-1">
+                          <span className="text-[10px] uppercase tracking-[0.2em] text-slate-500 sm:text-xs">
+                            Price
+                          </span>
+                          <input
+                            value={item.unitPrice}
+                            onChange={(event) =>
+                              updateItem(item.id, { unitPrice: Number(event.target.value) })
+                            }
+                            inputMode="decimal"
+                            size={Math.max(String(item.unitPrice).length, 1)}
+                            style={{ width: `${Math.max(String(item.unitPrice).length, 6)}ch` }}
+                            className="flex-none min-w-[6ch] w-auto bg-transparent text-xs text-slate-100 outline-none sm:text-sm"
+                          />
+                        </label>
+                        <div className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950 px-2 py-1">
+                          <span className="text-[10px] uppercase tracking-[0.2em] text-slate-500 sm:text-xs">
+                            Total
+                          </span>
+                          <span>{formatCurrency(item.quantity * item.unitPrice + extrasSum)}</span>
                         </div>
                       </div>
 
-                      <div className="mt-3 rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-                        <div className="flex items-center justify-between">
-                          <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                            Extra costs
-                          </p>
+                      {extraOpen[item.id] ? (
+                        <div className="mt-3 rounded-lg border border-slate-800 bg-slate-950/40 p-2.5 sm:p-3">
+                          <div className="flex items-center justify-between">
+                            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                              Extra costs
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExtraOpen((prev) => ({
+                                  ...prev,
+                                  [item.id]: !prev[item.id],
+                                }))
+                              }
+                              className="rounded-full border border-slate-800/70 px-2 py-0.5 text-[9px] uppercase tracking-[0.2em] text-slate-400 transition hover:bg-slate-950/60 hover:text-slate-200 sm:text-[10px]"
+                            >
+                              Hide
+                            </button>
+                          </div>
+                          <div className="mt-2 space-y-2">
+                            {extras.length ? (
+                              extras.map((extra) => (
+                                <div
+                                  key={extra.id}
+                                  className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200"
+                                >
+                                  <span className="truncate">{extra.description}</span>
+                                  <span className="flex items-center gap-3">
+                                    {formatCurrency(extra.amount)}
+                                    <button
+                                      type="button"
+                                      onClick={() => removeExtra(item.id, extra.id)}
+                                      className="text-[10px] uppercase tracking-[0.2em] text-rose-300"
+                                    >
+                                      Remove
+                                    </button>
+                                  </span>
+                                </div>
+                              ))
+                            ) : (
+                              <p className="text-xs text-slate-500">No extra costs added.</p>
+                            )}
+                          </div>
+                          <div className="mt-3 grid gap-2 sm:grid-cols-[1.4fr_0.6fr_auto]">
+                            <input
+                              placeholder="Extra description"
+                              value={extraDrafts[item.id]?.description ?? ""}
+                              onChange={(event) =>
+                                setExtraDrafts((prev) => ({
+                                  ...prev,
+                                  [item.id]: {
+                                    description: event.target.value,
+                                    amount: prev[item.id]?.amount ?? "",
+                                  },
+                                }))
+                              }
+                              className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-100"
+                            />
+                            <input
+                              placeholder="Amount"
+                              value={extraDrafts[item.id]?.amount ?? ""}
+                              onChange={(event) =>
+                                setExtraDrafts((prev) => ({
+                                  ...prev,
+                                  [item.id]: {
+                                    description: prev[item.id]?.description ?? "",
+                                    amount: event.target.value,
+                                  },
+                                }))
+                              }
+                              className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-100"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => addExtra(item.id)}
+                              className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-950"
+                            >
+                              Add
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mt-3">
                           <button
                             type="button"
                             onClick={() =>
                               setExtraOpen((prev) => ({
                                 ...prev,
-                                [item.id]: !prev[item.id],
+                                [item.id]: true,
                               }))
                             }
-                            className="rounded-full border border-slate-700 px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] text-slate-200"
+                            className="rounded-full border border-slate-800/70 px-2 py-0.5 text-[9px] uppercase tracking-[0.2em] text-slate-400 transition hover:bg-slate-950/60 hover:text-slate-200 sm:text-[10px]"
                           >
-                            {extraOpen[item.id] ? "Hide" : "Add extra"}
+                            Add extra
                           </button>
                         </div>
-                        {extraOpen[item.id] ? (
-                          <>
-                            <div className="mt-2 space-y-2">
-                              {extras.length ? (
-                                extras.map((extra) => (
-                                  <div
-                                    key={extra.id}
-                                    className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200"
-                                  >
-                                    <span className="truncate">{extra.description}</span>
-                                    <span className="flex items-center gap-3">
-                                      {formatCurrency(extra.amount)}
-                                      <button
-                                        type="button"
-                                        onClick={() => removeExtra(item.id, extra.id)}
-                                        className="text-[10px] uppercase tracking-[0.2em] text-rose-300"
-                                      >
-                                        Remove
-                                      </button>
-                                    </span>
-                                  </div>
-                                ))
-                              ) : (
-                                <p className="text-xs text-slate-500">No extra costs added.</p>
-                              )}
-                            </div>
-                            <div className="mt-3 grid gap-2 sm:grid-cols-[1.4fr_0.6fr_auto]">
-                              <input
-                                placeholder="Extra description"
-                                value={extraDrafts[item.id]?.description ?? ""}
-                                onChange={(event) =>
-                                  setExtraDrafts((prev) => ({
-                                    ...prev,
-                                    [item.id]: {
-                                      description: event.target.value,
-                                      amount: prev[item.id]?.amount ?? "",
-                                    },
-                                  }))
-                                }
-                                className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                              <input
-                                placeholder="Amount"
-                                value={extraDrafts[item.id]?.amount ?? ""}
-                                onChange={(event) =>
-                                  setExtraDrafts((prev) => ({
-                                    ...prev,
-                                    [item.id]: {
-                                      description: prev[item.id]?.description ?? "",
-                                      amount: event.target.value,
-                                    },
-                                  }))
-                                }
-                                className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-100"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => addExtra(item.id)}
-                                className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-950"
-                              >
-                                Add
-                              </button>
-                            </div>
-                          </>
-                        ) : null}
-                      </div>
+                      )}
                     </div>
                   );
                 })
@@ -752,23 +1133,90 @@ export default function QuoteBuilder() {
           <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Step 2</p>
           <h2 className="mt-2 text-lg font-semibold text-slate-100">Who & where</h2>
           <div className="mt-4 grid gap-4">
+            <div className="space-y-2">
+              <label className="text-xs uppercase tracking-[0.3em] text-slate-500">
+                Customer
+              </label>
+              <p className="text-sm text-slate-400">Search for an existing customer above, or enter new customer details below. Selecting a customer will link their saved details to this quote.</p>
+              <div className="relative">
+                <input
+                  placeholder="Search customers by name, email, or phone"
+                  value={customerSearch}
+                  onChange={(event) => {
+                    setCustomerSearch(event.target.value);
+                    if (customerId) setCustomerId(null);
+                  }}
+                  className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+                />
+                {customerLoading ? (
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500">
+                    Searching…
+                  </span>
+                ) : null}
+                {customerResults.length ? (
+                  <div className="absolute z-20 mt-2 w-full overflow-hidden rounded-xl border border-slate-800 bg-slate-950 shadow-lg">
+                    {customerResults.map((customer) => (
+                      <button
+                        key={customer.id}
+                        type="button"
+                        onClick={() => handleCustomerSelect(customer)}
+                        className="flex w-full flex-col gap-1 px-3 py-2 text-left text-sm text-slate-100 hover:bg-slate-900"
+                      >
+                        <span className="font-semibold">{customer.name}</span>
+                        <span className="text-xs text-slate-400">
+                          {customer.email ?? "No email"} · {customer.phone ?? "No phone"}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              {customerId ? (
+                <div className="flex items-center justify-between rounded-lg border border-emerald-400/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+                  <span>Selected customer linked to this quote.</span>
+                  <button
+                    type="button"
+                    onClick={clearCustomerSelection}
+                    className="rounded-full border border-emerald-300/40 px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] text-emerald-200"
+                  >
+                    Clear
+                  </button>
+                </div>
+              ) : null}
+              <div className="flex items-center my-2">
+                <div className="flex-1 border-t border-slate-800" />
+                <span className="mx-3 text-xs text-slate-500 uppercase tracking-[0.3em]">OR</span>
+                <div className="flex-1 border-t border-slate-800" />
+              </div>
+              <label className="text-xs uppercase tracking-[0.3em] text-slate-500">Enter customer details</label>
+            </div>
             <input
               placeholder="Customer name"
               value={customerName}
-              onChange={(event) => setCustomerName(event.target.value)}
+              onChange={(event) => {
+                setCustomerName(event.target.value);
+                if (customerId) setCustomerId(null);
+              }}
+              ref={customerNameRef}
               className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100"
             />
             <div className="grid gap-4 sm:grid-cols-2">
               <input
                 placeholder="Customer email"
                 value={customerEmail}
-                onChange={(event) => setCustomerEmail(event.target.value)}
+                onChange={(event) => {
+                  setCustomerEmail(event.target.value);
+                  if (customerId) setCustomerId(null);
+                }}
                 className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100"
               />
               <input
                 placeholder="Customer phone"
                 value={customerPhone}
-                onChange={(event) => setCustomerPhone(event.target.value)}
+                onChange={(event) => {
+                  setCustomerPhone(event.target.value);
+                  if (customerId) setCustomerId(null);
+                }}
                 className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100"
               />
             </div>
@@ -776,6 +1224,7 @@ export default function QuoteBuilder() {
               placeholder="Street address"
               value={siteLine1}
               onChange={(event) => setSiteLine1(event.target.value)}
+              ref={siteLine1Ref}
               className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100"
             />
             <input
@@ -901,6 +1350,94 @@ export default function QuoteBuilder() {
             />
           </div>
           {error ? <p className="mt-3 text-sm text-rose-400">{error}</p> : null}
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <div className="flex flex-col">
+              <p className="text-xs text-slate-500 inline-flex items-center gap-2">
+                {draftId ? (
+                  draftSaving ? (
+                    <>
+                      <svg className="h-4 w-4 animate-spin text-slate-400" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                      </svg>
+                      <span>Saving draft…</span>
+                    </>
+                  ) : draftSavedAt ? (
+                    <>
+                      {savedTickVisible ? (
+                        <svg className="h-4 w-4 text-emerald-400" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+                          <path fill="currentColor" d="M9.29 16.29 4.7 11.7 6.11 10.29 9.29 13.46 17.89 4.86 19.3 6.27z" />
+                        </svg>
+                      ) : (
+                        <svg className="h-4 w-4 text-slate-500" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+                          <path fill="currentColor" d="M9.29 16.29 4.7 11.7 6.11 10.29 9.29 13.46 17.89 4.86 19.3 6.27z" />
+                        </svg>
+                      )}
+                      <span>{formatRelativeTime(draftSavedAt)}</span>
+                    </>
+                  ) : (
+                    "Draft saved"
+                  )
+                ) : (
+                  "Draft not created yet"
+                )}
+              </p>
+              {draftError ? <p className="text-xs text-rose-400 mt-1">{draftError}</p> : null}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  if (draftSaving) return;
+
+                  // optimistic timestamp and tick so UI feels immediate
+                  const optimistic = Date.now();
+                  setDraftSavedAt(optimistic);
+                  setSavedTickVisible(true);
+
+                  if (draftId) {
+                    try {
+                      await updateDraft(draftId);
+                    } catch (err) {
+                      // show error and clear optimistic tick
+                      setDraftError("Unable to save draft");
+                      setSavedTickVisible(false);
+                    }
+                  } else {
+                    try {
+                      const id = await createDraft();
+                      if (id) {
+                        // make sure totals update on server
+                        await updateDraft(id);
+                      }
+                    } catch (err) {
+                      setDraftError("Unable to save draft");
+                      setSavedTickVisible(false);
+                    }
+                  }
+                }}
+                disabled={draftSaving}
+                className="rounded-full border border-slate-700/50 bg-slate-900/40 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-slate-200 disabled:opacity-50"
+              >
+                {draftSaving ? "Saving..." : "Save draft"}
+              </button>
+
+              {draftId ? (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await deleteDraft(draftId);
+                    setDraftId(null);
+                    setDraftSavedAt(null);
+                    setSavedTickVisible(false);
+                  }}
+                  className="rounded-full border border-rose-400/30 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-rose-200"
+                >
+                  Discard
+                </button>
+              ) : null}
+            </div>
+          </div>
           <button
             type="button"
             onClick={saveQuote}

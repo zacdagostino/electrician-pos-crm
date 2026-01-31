@@ -95,14 +95,26 @@ export default function AppNavPanel({ userName, orgName, orgLogoUrl }: AppNavPan
         >
           <div className="flex h-full flex-col">
             <div className="flex items-center justify-between border-b border-slate-800 bg-slate-950 px-4 py-3">
-              <span className="text-xs uppercase tracking-[0.3em] text-slate-500">Menu</span>
               <button
                 type="button"
                 onClick={() => setIsOpen(false)}
-                className="rounded-lg border border-slate-800 px-2 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-slate-200 hover:bg-slate-900"
+                aria-label="Close menu"
+                className="rounded-md border border-slate-800 p-1.5 text-slate-200 transition hover:bg-slate-900"
               >
-                Close
+                <svg
+                  aria-hidden="true"
+                  viewBox="0 0 24 24"
+                  className="h-4 w-4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                >
+                  <path d="M6 6l12 12" />
+                  <path d="M18 6l-12 12" />
+                </svg>
               </button>
+              <span className="text-xs uppercase tracking-[0.3em] text-slate-500">Menu</span>
             </div>
             <AppNav
               userName={userName}

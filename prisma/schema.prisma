@@ -38,10 +38,18 @@ enum PricingItemType {
 }
 
 enum QuoteStatus {
+  pending
   draft
   sent
   accepted
   declined
+}
+
+enum JobStatus {
+  pending
+  in_progress
+  completed
+  cancelled
 }
 
 enum QuoteItemType {
@@ -87,6 +95,7 @@ model Org {
   pricingProfiles PricingProfile[]
   customers      Customer[]
   quotes         Quote[]
+  jobs           Job[]
 }
 
 model OrgMember {
@@ -306,15 +315,51 @@ model Customer {
 
   org    Org     @relation(fields: [orgId], references: [id])
   quotes Quote[]
+  jobs   Job[]
 
   @@index([orgId])
+}
+
+model Job {
+  id                     String    @id @default(cuid())
+  orgId                  String
+  customerId             String
+  status                 JobStatus @default(pending)
+  title                  String?
+  customerName           String
+  customerEmail          String?
+  customerPhone          String?
+  siteLine1              String
+  siteLine2              String?
+  siteSuburb             String?
+  siteState              String?
+  sitePostcode           String?
+  notes                  String?
+  travelSurchargeApplied Boolean   @default(false)
+  travelSurchargeAmount  Decimal?  @db.Decimal(10, 2)
+  minimumChargeApplied   Boolean   @default(false)
+  minimumChargeAmount    Decimal?  @db.Decimal(10, 2)
+  subtotal               Decimal?  @db.Decimal(12, 2)
+  gstAmount              Decimal?  @db.Decimal(12, 2)
+  total                  Decimal?  @db.Decimal(12, 2)
+  quotePdfUrl            String?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  org      Org      @relation(fields: [orgId], references: [id])
+  customer Customer @relation(fields: [customerId], references: [id])
+  quotes   Quote[]
+
+  @@index([orgId])
+  @@index([customerId])
 }
 
 model Quote {
   id                  String      @id @default(cuid())
   orgId               String
   customerId          String?
-  status              QuoteStatus @default(draft)
+  jobId               String?
+  status              QuoteStatus @default(pending)
   title               String?
   customerName        String
   customerEmail       String?
@@ -338,10 +383,12 @@ model Quote {
 
   org      Org       @relation(fields: [orgId], references: [id])
   customer Customer? @relation(fields: [customerId], references: [id])
+  job      Job?      @relation(fields: [jobId], references: [id])
   items    QuoteItem[]
 
   @@index([orgId])
   @@index([customerId])
+  @@index([jobId])
 }
 
 model QuoteItem {

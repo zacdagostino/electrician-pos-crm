@@ -73,37 +73,67 @@ export const POST = async (req: Request) => {
 
   const customerEmail = body.customerEmail ? String(body.customerEmail).trim() : null;
   const customerPhone = body.customerPhone ? String(body.customerPhone).trim() : null;
+  const customerIdInput = body.customerId ? String(body.customerId).trim() : null;
 
   const quote = await db.$transaction(async (tx) => {
-    let customerId: string | null = null;
-    if (customerName) {
-      const existing = await tx.customer.findFirst({
-        where: {
+    let customer = customerIdInput
+      ? await tx.customer.findFirst({ where: { id: customerIdInput, orgId } })
+      : null;
+
+    if (!customer && customerEmail) {
+      customer = await tx.customer.findFirst({ where: { orgId, email: customerEmail } });
+    }
+
+    if (!customer && customerPhone) {
+      customer = await tx.customer.findFirst({ where: { orgId, phone: customerPhone } });
+    }
+
+    if (!customer && customerName) {
+      customer = await tx.customer.findFirst({ where: { orgId, name: customerName } });
+    }
+
+    if (!customer) {
+      customer = await tx.customer.create({
+        data: {
           orgId,
           name: customerName,
-          ...(customerEmail ? { email: customerEmail } : {}),
+          email: customerEmail,
+          phone: customerPhone,
         },
       });
-      if (existing) {
-        customerId = existing.id;
-      } else {
-        const created = await tx.customer.create({
-          data: {
-            orgId,
-            name: customerName,
-            email: customerEmail,
-            phone: customerPhone,
-          },
-        });
-        customerId = created.id;
-      }
     }
+
+    const job = await tx.job.create({
+      data: {
+        orgId,
+        customerId: customer.id,
+        status: "pending",
+        title: body.title ? String(body.title).trim() : null,
+        customerName,
+        customerEmail,
+        customerPhone,
+        siteLine1,
+        siteLine2: body.siteLine2 ? String(body.siteLine2).trim() : null,
+        siteSuburb: body.siteSuburb ? String(body.siteSuburb).trim() : null,
+        siteState: body.siteState ? String(body.siteState).trim() : null,
+        sitePostcode: body.sitePostcode ? String(body.sitePostcode).trim() : null,
+        travelSurchargeApplied,
+        travelSurchargeAmount: new Prisma.Decimal(totals.travelSurchargeAmount),
+        minimumChargeApplied: totals.minimumChargeApplied,
+        minimumChargeAmount: new Prisma.Decimal(totals.minimumChargeAmount),
+        subtotal: new Prisma.Decimal(totals.subtotal),
+        gstAmount: new Prisma.Decimal(totals.gstAmount),
+        total: new Prisma.Decimal(totals.total),
+        notes: body.notes ? String(body.notes).trim() : null,
+      },
+    });
 
     return tx.quote.create({
       data: {
         orgId,
-        customerId,
-        status: "draft",
+        customerId: customer.id,
+        jobId: job.id,
+        status: "pending",
         title: body.title ? String(body.title).trim() : null,
         customerName,
         customerEmail,
@@ -137,5 +167,5 @@ export const POST = async (req: Request) => {
     });
   });
 
-  return NextResponse.json({ quoteId: quote.id });
+  return NextResponse.json({ quoteId: quote.id, jobId: quote.jobId });
 };
