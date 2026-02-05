@@ -3,16 +3,16 @@
 import { useState } from "react";
 import { signIn } from "next-auth/react";
 import Link from "next/link";
+import { useToast } from "@/components/ToastProvider";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const { notify } = useToast();
 
   const onSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    setError(null);
     setLoading(true);
 
     const result = await signIn("credentials", {
@@ -24,7 +24,7 @@ export default function LoginPage() {
     setLoading(false);
 
     if (result?.error) {
-      setError("Invalid email or password.");
+      notify({ tone: "error", title: "Sign in failed", message: "Invalid email or password." });
       return;
     }
 
@@ -59,7 +59,6 @@ export default function LoginPage() {
               required
             />
           </label>
-          {error ? <p className="text-sm text-rose-300">{error}</p> : null}
           <button
             type="submit"
             disabled={loading}

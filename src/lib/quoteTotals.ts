@@ -35,17 +35,15 @@ export const computeQuoteTotals = (
   });
 
   const subtotal = normalizedItems.reduce((sum, item) => sum + item.lineTotal, 0);
-  const minimumCharge = Number(profile.minimumCharge);
-  const minimumChargeApplied = subtotal < minimumCharge;
-  const minimumChargeAmount = minimumChargeApplied ? minimumCharge : 0;
+  const minimumChargeApplied = false;
+  const minimumChargeAmount = 0;
 
   const travelSurchargeAmount =
     travelSurchargeApplied && profile.travelSurchargeEnabled
       ? Number(profile.travelSurchargeAmount ?? 0)
       : 0;
 
-  let totalBeforeTax = minimumChargeApplied ? minimumCharge : subtotal;
-  totalBeforeTax += travelSurchargeAmount;
+  let totalBeforeTax = subtotal + travelSurchargeAmount;
 
   const gstRate = Number(profile.gstRate ?? 0.1);
   let gstAmount = 0;

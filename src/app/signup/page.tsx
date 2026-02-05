@@ -3,17 +3,17 @@
 import { useState } from "react";
 import Link from "next/link";
 import { signIn } from "next-auth/react";
+import { useToast } from "@/components/ToastProvider";
 
 export default function SignupPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const { notify } = useToast();
 
   const onSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    setError(null);
     setLoading(true);
 
     const response = await fetch("/api/auth/signup", {
@@ -24,7 +24,11 @@ export default function SignupPage() {
 
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
-      setError(payload.error || "Unable to create account.");
+      notify({
+        tone: "error",
+        title: "Signup failed",
+        message: payload.error || "Unable to create account.",
+      });
       setLoading(false);
       return;
     }
@@ -38,7 +42,11 @@ export default function SignupPage() {
     setLoading(false);
 
     if (result?.error) {
-      setError("Account created. Please sign in.");
+      notify({
+        tone: "warning",
+        title: "Sign in required",
+        message: "Account created. Please sign in.",
+      });
       return;
     }
 
@@ -83,7 +91,6 @@ export default function SignupPage() {
               required
             />
           </label>
-          {error ? <p className="text-sm text-rose-300">{error}</p> : null}
           <button
             type="submit"
             disabled={loading}

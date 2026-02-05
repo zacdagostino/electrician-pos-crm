@@ -25,6 +25,12 @@ enum OrgMemberStatus {
   removed
 }
 
+enum TradeRole {
+  electrician
+  apprentice
+  office
+}
+
 enum LocationType {
   van
   warehouse
@@ -57,6 +63,16 @@ enum QuoteItemType {
   addon
   labour
   adjustment
+}
+
+enum SWILibraryType {
+  ppe
+  tool
+  test
+  part
+  hazard
+  step
+  definition
 }
 
 model User {
@@ -95,7 +111,14 @@ model Org {
   pricingProfiles PricingProfile[]
   customers      Customer[]
   quotes         Quote[]
+  quoteTemplates QuoteTemplate[]
+  quoteHistories QuoteHistory[]
   jobs           Job[]
+  jobTasks       JobTask[]
+  jobSwis        JobSWI[]
+  services       Service[]
+  serviceSwis    ServiceSWI[]
+  swiLibraryItems SWILibraryItem[]
 }
 
 model OrgMember {
@@ -104,10 +127,15 @@ model OrgMember {
   userId    String
   role      OrgRole         @default(owner)
   status    OrgMemberStatus @default(active)
+  tradeRole TradeRole       @default(office)
   createdAt DateTime        @default(now())
 
-  org  Org  @relation(fields: [orgId], references: [id])
-  user User @relation(fields: [userId], references: [id])
+  org           Org     @relation(fields: [orgId], references: [id])
+  user          User    @relation(fields: [userId], references: [id])
+  assignedQuotes Quote[] @relation("QuoteAssignee")
+  assignedJobs   Job[]   @relation("JobAssignee")
+  completedTasks JobTask[] @relation("TaskCompleter")
+  quoteHistoryUpdates QuoteHistory[] @relation("QuoteHistoryUpdater")
 
   @@unique([orgId, userId])
   @@index([userId])
@@ -311,6 +339,11 @@ model Customer {
   name      String
   email     String?
   phone     String?
+  siteLine1 String?
+  siteLine2 String?
+  siteSuburb String?
+  siteState String?
+  sitePostcode String?
   createdAt DateTime @default(now())
 
   org    Org     @relation(fields: [orgId], references: [id])
@@ -324,6 +357,7 @@ model Job {
   id                     String    @id @default(cuid())
   orgId                  String
   customerId             String
+  assignedToMemberId     String?
   status                 JobStatus @default(pending)
   title                  String?
   customerName           String
@@ -335,6 +369,10 @@ model Job {
   siteState              String?
   sitePostcode           String?
   notes                  String?
+  scheduledStart         DateTime?
+  scheduledEnd           DateTime?
+  scheduledAllDay        Boolean   @default(false)
+  scheduledNotes         String?
   travelSurchargeApplied Boolean   @default(false)
   travelSurchargeAmount  Decimal?  @db.Decimal(10, 2)
   minimumChargeApplied   Boolean   @default(false)
@@ -348,10 +386,101 @@ model Job {
 
   org      Org      @relation(fields: [orgId], references: [id])
   customer Customer @relation(fields: [customerId], references: [id])
+  assignedToMember OrgMember? @relation("JobAssignee", fields: [assignedToMemberId], references: [id])
   quotes   Quote[]
+  tasks    JobTask[]
+  swi      JobSWI?
 
   @@index([orgId])
   @@index([customerId])
+  @@index([assignedToMemberId])
+}
+
+model JobSWI {
+  id        String   @id @default(cuid())
+  orgId     String
+  jobId     String   @unique
+  content   Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  org Org @relation(fields: [orgId], references: [id])
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+  @@index([jobId])
+}
+
+model Service {
+  id        String   @id @default(cuid())
+  orgId     String
+  name      String
+  price     Decimal? @db.Decimal(12, 2)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  org Org @relation(fields: [orgId], references: [id])
+  swi ServiceSWI?
+
+  @@index([orgId])
+  @@unique([orgId, name])
+}
+
+model ServiceSWI {
+  id        String   @id @default(cuid())
+  orgId     String
+  serviceId String   @unique
+  content   Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  org     Org     @relation(fields: [orgId], references: [id])
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+  @@index([serviceId])
+}
+
+model SWILibraryItem {
+  id        String         @id @default(cuid())
+  orgId     String
+  type      SWILibraryType
+  name      String
+  usage     String?
+  howTo     String?
+  photoUrls Json?
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  org Org @relation(fields: [orgId], references: [id])
+
+  @@index([orgId])
+  @@index([type])
+}
+
+model JobTask {
+  id                  String   @id @default(cuid())
+  orgId               String
+  jobId               String
+  sourceQuoteId       String?
+  name                String
+  description         String?
+  sortOrder           Int      @default(0)
+  status              String   @default("pending")
+  completedAt         DateTime?
+  completedByMemberId String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  org      Org      @relation(fields: [orgId], references: [id])
+  job      Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  sourceQuote Quote? @relation(fields: [sourceQuoteId], references: [id])
+  completedBy OrgMember? @relation("TaskCompleter", fields: [completedByMemberId], references: [id])
+
+  @@index([orgId])
+  @@index([jobId])
+  @@index([sourceQuoteId])
+  @@index([completedByMemberId])
 }
 
 model Quote {
@@ -359,7 +488,10 @@ model Quote {
   orgId               String
   customerId          String?
   jobId               String?
-  status              QuoteStatus @default(pending)
+  status              QuoteStatus @default(draft)
+  assignedToMemberId  String?
+  sentAt              DateTime?
+  sentVia             QuoteSentVia?
   title               String?
   customerName        String
   customerEmail       String?
@@ -384,17 +516,22 @@ model Quote {
   org      Org       @relation(fields: [orgId], references: [id])
   customer Customer? @relation(fields: [customerId], references: [id])
   job      Job?      @relation(fields: [jobId], references: [id])
+  assignedToMember OrgMember? @relation("QuoteAssignee", fields: [assignedToMemberId], references: [id])
+  jobTasks         JobTask[]
   items    QuoteItem[]
+  history  QuoteHistory[]
 
   @@index([orgId])
   @@index([customerId])
   @@index([jobId])
+  @@index([assignedToMemberId])
 }
 
 model QuoteItem {
   id            String       @id @default(cuid())
   quoteId       String
   pricingItemId String?
+  serviceId     String?
   type          QuoteItemType
   name          String
   description   String?
@@ -403,7 +540,84 @@ model QuoteItem {
   lineTotal     Decimal      @db.Decimal(12, 2)
 
   quote       Quote        @relation(fields: [quoteId], references: [id])
-  pricingItem PricingItem? @relation(fields: [pricingItemId], references: [id])
+  service     Service?     @relation(fields: [serviceId], references: [id])
+
+  @@index([serviceId])
+}
+
+model QuoteTemplate {
+  id        String   @id @default(cuid())
+  orgId     String
+  name      String
+  isDefault Boolean  @default(false)
+  blocks    Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  org Org @relation(fields: [orgId], references: [id])
+
+  @@index([orgId])
+}
+
+model QuoteHistory {
+  id                     String      @id @default(cuid())
+  orgId                  String
+  quoteId                String
+  status                 QuoteStatus @default(draft)
+  title                  String?
+  customerName           String
+  customerEmail          String?
+  customerPhone          String?
+  siteLine1              String
+  siteLine2              String?
+  siteSuburb             String?
+  siteState              String?
+  sitePostcode           String?
+  pricingProfileId       String?
+  travelSurchargeApplied Boolean   @default(false)
+  travelSurchargeAmount  Decimal?  @db.Decimal(10, 2)
+  minimumChargeApplied   Boolean   @default(false)
+  minimumChargeAmount    Decimal?  @db.Decimal(10, 2)
+  subtotal               Decimal   @db.Decimal(12, 2)
+  gstAmount              Decimal   @db.Decimal(12, 2)
+  total                  Decimal   @db.Decimal(12, 2)
+  notes                  String?
+  jobId                  String?
+  customerId             String?
+  assignedToMemberId     String?
+  changedByMemberId      String?
+  createdAt              DateTime  @default(now())
+
+  org   Org   @relation(fields: [orgId], references: [id])
+  quote Quote @relation(fields: [quoteId], references: [id])
+  changedByMember OrgMember? @relation("QuoteHistoryUpdater", fields: [changedByMemberId], references: [id])
+  items QuoteHistoryItem[]
+
+  @@index([orgId])
+  @@index([quoteId])
+  @@index([createdAt])
+  @@index([changedByMemberId])
+}
+
+model QuoteHistoryItem {
+  id            String       @id @default(cuid())
+  historyId     String
+  pricingItemId String?
+  type          QuoteItemType
+  name          String
+  description   String?
+  quantity      Decimal      @db.Decimal(10, 2)
+  unitPrice     Decimal      @db.Decimal(10, 2)
+  lineTotal     Decimal      @db.Decimal(12, 2)
+
+  history QuoteHistory @relation(fields: [historyId], references: [id], onDelete: Cascade)
+
+  @@index([historyId])
+}
+
+enum QuoteSentVia {
+  email
+  sms
 }
 
 model AuditLog {

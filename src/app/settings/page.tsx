@@ -5,10 +5,11 @@ import ProfileForm from "./ProfileForm";
 import OrgLogoForm from "./OrgLogoForm";
 
 export default async function SettingsPage() {
-  const { session, orgId } = await requireOrg();
-  const [org, user] = await Promise.all([
+  const { session, orgId, membership } = await requireOrg();
+  const [org, user, member] = await Promise.all([
     db.org.findUnique({ where: { id: orgId } }),
     db.user.findUnique({ where: { id: session.user.id } }),
+    db.orgMember.findFirst({ where: { orgId, userId: session.user.id } }),
   ]);
 
   return (
@@ -16,6 +17,7 @@ export default async function SettingsPage() {
       userName={user?.name}
       orgName={org?.name}
       orgLogoUrl={org?.logoUrl ?? null}
+      userRole={membership?.tradeRole ?? null}
       title="Settings"
       subtitle="Manage your personal details used across the app."
     >
@@ -42,6 +44,7 @@ export default async function SettingsPage() {
           name={user?.name ?? null}
           email={user?.email ?? ""}
           phone={user?.phone ?? null}
+          tradeRole={member?.tradeRole ?? "office"}
         />
       </div>
     </AppShell>

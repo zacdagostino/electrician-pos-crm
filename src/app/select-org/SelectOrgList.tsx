@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useToast } from "@/components/ToastProvider";
 
 type OrgOption = {
   id: string;
@@ -13,11 +14,10 @@ type SelectOrgListProps = {
 
 export default function SelectOrgList({ orgs }: SelectOrgListProps) {
   const [loadingId, setLoadingId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { notify } = useToast();
 
   const selectOrg = async (orgId: string) => {
     setLoadingId(orgId);
-    setError(null);
 
     const response = await fetch("/api/org/select", {
       method: "POST",
@@ -27,7 +27,11 @@ export default function SelectOrgList({ orgs }: SelectOrgListProps) {
 
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
-      setError(payload.error || "Unable to select org.");
+      notify({
+        tone: "error",
+        title: "Selection failed",
+        message: payload.error || "Unable to select org.",
+      });
       setLoadingId(null);
       return;
     }
@@ -51,7 +55,6 @@ export default function SelectOrgList({ orgs }: SelectOrgListProps) {
           </span>
         </button>
       ))}
-      {error ? <p className="text-sm text-rose-300">{error}</p> : null}
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerAuthSession } from "@/auth";
 import { db } from "@/lib/db";
-import type { LocationType } from "@prisma/client";
+import { Prisma, type LocationType } from "@prisma/client";
 
 export const POST = async (req: Request) => {
   const session = await getServerAuthSession();
@@ -36,6 +36,14 @@ export const POST = async (req: Request) => {
       );
     }
 
+    const user = await db.user.findUnique({ where: { id: session.user.id } });
+    if (!user) {
+      return NextResponse.json(
+        { error: "User account not found. Please sign in again." },
+        { status: 401 }
+      );
+    }
+
     const org = await db.$transaction(async (tx) => {
       const createdOrg = await tx.org.create({
         data: {
@@ -48,7 +56,7 @@ export const POST = async (req: Request) => {
       await tx.orgMember.create({
         data: {
           orgId: createdOrg.id,
-          userId: session.user.id,
+          userId: user.id,
           role: "owner",
           status: "active",
         },
@@ -74,6 +82,23 @@ export const POST = async (req: Request) => {
 
     return response;
   } catch (error) {
-    return NextResponse.json({ error: "Unable to complete onboarding" }, { status: 500 });
+    console.error("Onboarding failed:", error);
+
+    let detail: string | undefined;
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      detail = error.code;
+    } else if (error instanceof Prisma.PrismaClientValidationError) {
+      detail = "Validation error";
+    } else if (error instanceof Error) {
+      detail = error.message;
+    }
+
+    return NextResponse.json(
+      {
+        error: "Unable to complete onboarding",
+        detail: process.env.NODE_ENV === "production" ? undefined : detail,
+      },
+      { status: 500 }
+    );
   }
 };

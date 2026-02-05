@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useToast } from "@/components/ToastProvider";
 
 type OrgLogoFormProps = {
   orgLogoUrl: string | null;
@@ -13,19 +14,20 @@ export default function OrgLogoForm({ orgLogoUrl }: OrgLogoFormProps) {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(orgLogoUrl);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const { notify } = useToast();
 
   const onFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selected = event.target.files?.[0] ?? null;
     setFile(selected);
-    setError(null);
-    setSuccess(null);
 
     if (selected) {
       if (selected.size > MAX_MB * 1024 * 1024) {
-        setError(`Logo must be under ${MAX_MB}MB.`);
+        notify({
+          tone: "error",
+          title: "File too large",
+          message: `Logo must be under ${MAX_MB}MB.`,
+        });
         setFile(null);
         return;
       }
@@ -42,13 +44,11 @@ export default function OrgLogoForm({ orgLogoUrl }: OrgLogoFormProps) {
 
   const onUpload = async () => {
     if (!file) {
-      setError("Choose a logo file first.");
+      notify({ tone: "error", title: "Missing file", message: "Choose a logo file first." });
       return;
     }
 
     setSaving(true);
-    setError(null);
-    setSuccess(null);
 
     const formData = new FormData();
     formData.append("file", file);
@@ -62,18 +62,20 @@ export default function OrgLogoForm({ orgLogoUrl }: OrgLogoFormProps) {
 
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
-      setError(payload.error || "Unable to upload logo.");
+      notify({
+        tone: "error",
+        title: "Upload failed",
+        message: payload.error || "Unable to upload logo.",
+      });
       return;
     }
 
-    setSuccess("Logo updated.");
+    notify({ tone: "success", title: "Logo updated", message: "Logo uploaded." });
     router.refresh();
   };
 
   const onRemove = async () => {
     setSaving(true);
-    setError(null);
-    setSuccess(null);
 
     const formData = new FormData();
     formData.append("remove", "1");
@@ -87,13 +89,17 @@ export default function OrgLogoForm({ orgLogoUrl }: OrgLogoFormProps) {
 
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
-      setError(payload.error || "Unable to remove logo.");
+      notify({
+        tone: "error",
+        title: "Remove failed",
+        message: payload.error || "Unable to remove logo.",
+      });
       return;
     }
 
     setFile(null);
     setPreview(null);
-    setSuccess("Logo removed.");
+    notify({ tone: "success", title: "Logo removed", message: "Logo removed." });
     router.refresh();
   };
 
@@ -139,8 +145,6 @@ export default function OrgLogoForm({ orgLogoUrl }: OrgLogoFormProps) {
               Remove
             </button>
           </div>
-          {error ? <p className="text-sm text-rose-300">{error}</p> : null}
-          {success ? <p className="text-sm text-emerald-300">{success}</p> : null}
         </div>
       </div>
     </section>

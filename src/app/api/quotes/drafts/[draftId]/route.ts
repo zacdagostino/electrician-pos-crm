@@ -5,7 +5,12 @@ import { getSelectedOrgId } from "@/lib/authz";
 import { db } from "@/lib/db";
 import { computeQuoteTotals } from "@/lib/quoteTotals";
 
-type Params = { params: { draftId: string } };
+type Params = { params: Promise<{ draftId: string }> };
+
+const getDraftId = async (params: Params["params"]) => {
+  const resolved = await params;
+  return resolved.draftId;
+};
 
 export const GET = async (_req: Request, { params }: Params) => {
   try {
@@ -19,7 +24,7 @@ export const GET = async (_req: Request, { params }: Params) => {
       return NextResponse.json({ error: "No org selected" }, { status: 400 });
     }
 
-    const draftId = params.draftId;
+    const draftId = await getDraftId(params);
     const quote = await db.quote.findFirst({ where: { id: draftId, orgId }, include: { items: true } });
     if (!quote) {
       return NextResponse.json({ error: "Draft not found" }, { status: 404 });
@@ -47,7 +52,7 @@ export const PATCH = async (req: Request, { params }: Params) => {
       return NextResponse.json({ error: "No org selected" }, { status: 400 });
     }
 
-    const draftId = params.draftId;
+    const draftId = await getDraftId(params);
     const body = await req.json().catch(() => ({}));
 
     const quote = await db.quote.findFirst({ where: { id: draftId, orgId } });
@@ -61,6 +66,9 @@ export const PATCH = async (req: Request, { params }: Params) => {
     const items = Array.isArray(body.items) ? body.items : [];
 
     const profile = await db.pricingProfile.findFirst({ where: { orgId }, orderBy: { createdAt: "asc" } });
+    if (!profile) {
+      return NextResponse.json({ error: "Pricing profile not configured" }, { status: 400 });
+    }
     const totals = computeQuoteTotals(items, profile, Boolean(body.travelSurchargeApplied));
 
     const updated = await db.$transaction(async (tx) => {
@@ -124,7 +132,7 @@ export const DELETE = async (_req: Request, { params }: Params) => {
       return NextResponse.json({ error: "No org selected" }, { status: 400 });
     }
 
-    const draftId = params.draftId;
+    const draftId = await getDraftId(params);
     const quote = await db.quote.findFirst({ where: { id: draftId, orgId } });
     if (!quote) {
       return NextResponse.json({ error: "Draft not found" }, { status: 404 });
@@ -133,7 +141,10 @@ export const DELETE = async (_req: Request, { params }: Params) => {
       return NextResponse.json({ error: "Not a draft" }, { status: 400 });
     }
 
-    await db.quote.delete({ where: { id: draftId } });
+    await db.$transaction(async (tx) => {
+      await tx.quoteItem.deleteMany({ where: { quoteId: draftId } });
+      await tx.quote.delete({ where: { id: draftId, orgId } });
+    });
     return NextResponse.json({ ok: true });
   } catch (err: any) {
     console.error("Error deleting draft:", err);

@@ -1,22 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-
-type PricingItem = {
-  id: string;
-  name: string;
-  price: number;
-  type: "fixed" | "addon";
-  isActive: boolean;
-  sortOrder: number;
-};
-
-type PricingCategory = {
-  id: string;
-  name: string;
-  sortOrder: number;
-  items: PricingItem[];
-};
+import { useEffect, useState } from "react";
+import { useToast } from "@/components/ToastProvider";
 
 type PricingProfile = {
   id: string;
@@ -37,7 +22,6 @@ type PricingProfile = {
   comparisonText: string | null;
   customerSummary: string | null;
   customerExplanation: string | null;
-  categories: PricingCategory[];
 };
 
 const formatNumber = (value: number | null | undefined) =>
@@ -47,8 +31,13 @@ export default function PricingForm() {
   const [profile, setProfile] = useState<PricingProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
+  const [unpricedServices, setUnpricedServices] = useState<Array<{ id: string; name: string }>>(
+    []
+  );
+  const [services, setServices] = useState<Array<{ id: string; name: string; price: number | null }>>(
+    []
+  );
+  const { notify } = useToast();
 
   const [baseFields, setBaseFields] = useState({
     name: "",
@@ -70,18 +59,21 @@ export default function PricingForm() {
     customerExplanation: "",
   });
 
-  const [itemEdits, setItemEdits] = useState<Record<string, { price: string; isActive: boolean }>>(
-    {}
-  );
-
   const loadProfile = async () => {
     setLoading(true);
-    setError(null);
     try {
-      const response = await fetch("/api/settings/pricing");
-      const payload = await response.json();
-      if (!response.ok) {
-        setError(payload?.error ?? "Unable to load pricing profile.");
+      const [profileResponse, servicesResponse] = await Promise.all([
+        fetch("/api/settings/pricing"),
+        fetch("/api/services"),
+      ]);
+      const payload = await profileResponse.json();
+      const servicesPayload = await servicesResponse.json().catch(() => ({}));
+      if (!profileResponse.ok) {
+        notify({
+          tone: "error",
+          title: "Load failed",
+          message: payload?.error ?? "Unable to load pricing profile.",
+        });
         return;
       }
       const nextProfile = payload.profile as PricingProfile;
@@ -106,18 +98,19 @@ export default function PricingForm() {
         customerExplanation: nextProfile.customerExplanation ?? "",
       });
 
-      const nextItemEdits: Record<string, { price: string; isActive: boolean }> = {};
-      nextProfile.categories.forEach((category) => {
-        category.items.forEach((item) => {
-          nextItemEdits[item.id] = {
-            price: formatNumber(item.price),
-            isActive: item.isActive ?? true,
-          };
-        });
-      });
-      setItemEdits(nextItemEdits);
+      if (servicesResponse.ok) {
+        const servicesList = servicesPayload.services ?? [];
+        setServices(servicesList);
+        const missing = servicesList.filter(
+          (service: { price: number | null }) => service.price == null
+        );
+        setUnpricedServices(missing);
+      } else {
+        setUnpricedServices([]);
+        setServices([]);
+      }
     } catch (err) {
-      setError("Unable to load pricing profile.");
+      notify({ tone: "error", title: "Load failed", message: "Unable to load pricing profile." });
     } finally {
       setLoading(false);
     }
@@ -130,14 +123,6 @@ export default function PricingForm() {
   const onSave = async () => {
     if (!profile) return;
     setSaving(true);
-    setError(null);
-    setSuccess(null);
-
-    const itemsPayload = Object.entries(itemEdits).map(([id, value]) => ({
-      id,
-      price: Number(value.price),
-      isActive: value.isActive,
-    }));
 
     try {
       const response = await fetch("/api/settings/pricing", {
@@ -155,26 +140,51 @@ export default function PricingForm() {
           intervalRate: baseFields.intervalRate,
           afterHoursMultiplier: baseFields.afterHoursMultiplier,
           gstRate: baseFields.gstRate,
-          items: itemsPayload,
         }),
       });
 
       const payload = await response.json();
       if (!response.ok) {
-        setError(payload?.error ?? "Unable to save pricing.");
+        notify({
+          tone: "error",
+          title: "Save failed",
+          message: payload?.error ?? "Unable to save pricing.",
+        });
         return;
       }
 
-      setSuccess("Pricing updated.");
+      notify({ tone: "success", title: "Pricing updated", message: "Pricing saved." });
       await loadProfile();
     } catch (err) {
-      setError("Unable to save pricing.");
-    } finally {
+      notify({ tone: "error", title: "Save failed", message: "Unable to save pricing." });
+  } finally {
       setSaving(false);
     }
   };
 
-  const categories = useMemo(() => profile?.categories ?? [], [profile]);
+  const saveServicePrices = async () => {
+    setSaving(true);
+    try {
+      await Promise.all(
+        services.map((service) =>
+          fetch(`/api/services/${service.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: service.name,
+              price: service.price,
+            }),
+          })
+        )
+      );
+      notify({ tone: "success", title: "Services updated", message: "Prices saved." });
+      await loadProfile();
+    } catch (err) {
+      notify({ tone: "error", title: "Save failed", message: "Unable to update services." });
+    } finally {
+      setSaving(false);
+    }
+  };
 
   if (loading) {
     return <p className="text-sm text-slate-400">Loading pricing profile...</p>;
@@ -183,16 +193,6 @@ export default function PricingForm() {
   if (!profile) {
     return <p className="text-sm text-rose-400">Pricing profile unavailable.</p>;
   }
-
-  const renderCategory = (type: "fixed" | "addon") =>
-    categories
-      .map((category) => ({
-        ...category,
-        items: category.items
-          .filter((item) => item.type === type)
-          .sort((a, b) => a.sortOrder - b.sortOrder),
-      }))
-      .filter((category) => category.items.length);
 
   return (
     <div className="space-y-8">
@@ -214,9 +214,43 @@ export default function PricingForm() {
             {saving ? "Saving..." : "Save pricing"}
           </button>
         </div>
-        {error ? <p className="mt-3 text-sm text-rose-400">{error}</p> : null}
-        {success ? <p className="mt-3 text-sm text-emerald-300">{success}</p> : null}
       </section>
+
+      {unpricedServices.length ? (
+        <section className="rounded-2xl border border-amber-400/40 bg-amber-500/10 p-5 text-amber-100">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-xs uppercase tracking-[0.3em] text-amber-200/80">
+                Missing prices
+              </p>
+              <p className="mt-2 text-sm font-semibold">
+                {unpricedServices.length} service{unpricedServices.length === 1 ? "" : "s"} need pricing.
+              </p>
+            </div>
+            <a
+              href="/services"
+              className="rounded-lg border border-amber-300/60 px-3 py-2 text-xs font-semibold text-amber-100 hover:bg-amber-500/20"
+            >
+              Add prices
+            </a>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2 text-xs text-amber-100/80">
+            {unpricedServices.slice(0, 6).map((service) => (
+              <span
+                key={service.id}
+                className="rounded-full border border-amber-300/40 px-2.5 py-1"
+              >
+                {service.name}
+              </span>
+            ))}
+            {unpricedServices.length > 6 ? (
+              <span className="rounded-full border border-amber-300/40 px-2.5 py-1">
+                +{unpricedServices.length - 6} more
+              </span>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       <section className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
         <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
@@ -438,115 +472,56 @@ export default function PricingForm() {
 
       <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
         <header className="mb-4 space-y-1">
-          <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Fixed-price services</p>
-          <h3 className="text-lg font-semibold text-slate-100">Quote-ready items</h3>
-        </header>
-        <div className="grid gap-6 lg:grid-cols-2">
-          {renderCategory("fixed").map((category) => (
-            <div
-              key={category.id}
-              className="rounded-xl border border-slate-800 bg-slate-950/60 p-4"
-            >
-              <p className="text-sm font-semibold text-slate-100">{category.name}</p>
-              <div className="mt-4 space-y-3">
-                {category.items.map((item) => (
-                  <div key={item.id} className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm text-slate-200">{item.name}</p>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="checkbox"
-                        checked={itemEdits[item.id]?.isActive ?? true}
-                        onChange={(event) =>
-                          setItemEdits((prev) => ({
-                            ...prev,
-                            [item.id]: {
-                              price: prev[item.id]?.price ?? formatNumber(item.price),
-                              isActive: event.target.checked,
-                            },
-                          }))
-                        }
-                        className="h-4 w-4 rounded border-slate-700 bg-slate-950"
-                      />
-                      <input
-                        value={itemEdits[item.id]?.price ?? formatNumber(item.price)}
-                        onChange={(event) =>
-                          setItemEdits((prev) => ({
-                            ...prev,
-                            [item.id]: {
-                              price: event.target.value,
-                              isActive: prev[item.id]?.isActive ?? true,
-                            },
-                          }))
-                        }
-                        className="w-24 rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-sm text-slate-100"
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
-        <header className="mb-4 space-y-1">
-          <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Add-ons</p>
-          <h3 className="text-lg font-semibold text-slate-100">Same-visit pricing</h3>
+          <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Services</p>
+          <h3 className="text-lg font-semibold text-slate-100">Service pricing</h3>
           <p className="text-sm text-slate-400">
-            Add-ons apply only after minimum charge is met.
+            These services are managed in the Services page and priced here.
           </p>
         </header>
-        <div className="grid gap-6 lg:grid-cols-2">
-          {renderCategory("addon").map((category) => (
-            <div
-              key={category.id}
-              className="rounded-xl border border-slate-800 bg-slate-950/60 p-4"
-            >
-              <p className="text-sm font-semibold text-slate-100">{category.name}</p>
-              <div className="mt-4 space-y-3">
-                {category.items.map((item) => (
-                  <div key={item.id} className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm text-slate-200">{item.name}</p>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="checkbox"
-                        checked={itemEdits[item.id]?.isActive ?? true}
-                        onChange={(event) =>
-                          setItemEdits((prev) => ({
-                            ...prev,
-                            [item.id]: {
-                              price: prev[item.id]?.price ?? formatNumber(item.price),
-                              isActive: event.target.checked,
-                            },
-                          }))
-                        }
-                        className="h-4 w-4 rounded border-slate-700 bg-slate-950"
-                      />
-                      <input
-                        value={itemEdits[item.id]?.price ?? formatNumber(item.price)}
-                        onChange={(event) =>
-                          setItemEdits((prev) => ({
-                            ...prev,
-                            [item.id]: {
-                              price: event.target.value,
-                              isActive: prev[item.id]?.isActive ?? true,
-                            },
-                          }))
-                        }
-                        className="w-24 rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-sm text-slate-100"
-                      />
-                    </div>
-                  </div>
-                ))}
+        <div className="grid gap-4">
+          {services.length ? (
+            services.map((service) => (
+              <div
+                key={service.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-3"
+              >
+                <p className="text-sm font-semibold text-slate-100">{service.name}</p>
+                <input
+                  value={service.price == null ? "" : String(service.price)}
+                  onChange={(event) =>
+                    setServices((current) =>
+                      current.map((item) =>
+                        item.id === service.id
+                          ? {
+                              ...item,
+                              price: event.target.value === "" ? null : Number(event.target.value),
+                            }
+                          : item
+                      )
+                    )
+                  }
+                  placeholder="Price"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  className="w-28 rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-sm text-slate-100"
+                />
               </div>
-            </div>
-          ))}
+            ))
+          ) : (
+            <p className="text-sm text-slate-500">No services yet. Add them from the Services page.</p>
+          )}
         </div>
+        {services.length ? (
+          <button
+            type="button"
+            onClick={saveServicePrices}
+            disabled={saving}
+            className="mt-4 rounded-lg border border-emerald-400/60 px-4 py-2 text-sm font-semibold text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-50"
+          >
+            {saving ? "Saving..." : "Save service prices"}
+          </button>
+        ) : null}
       </section>
     </div>
   );

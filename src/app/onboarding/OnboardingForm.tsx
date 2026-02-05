@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import SelectMenu from "@/components/SelectMenu";
+import { useToast } from "@/components/ToastProvider";
 
 const locationTypes = [
   { value: "van", label: "Van" },
@@ -17,12 +19,11 @@ export default function OnboardingForm() {
   const [gstPreset, setGstPreset] = useState("0.10");
   const [locationName, setLocationName] = useState("");
   const [locationType, setLocationType] = useState("van");
-  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const { notify } = useToast();
 
   const onSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    setError(null);
     setLoading(true);
 
     const response = await fetch("/api/onboarding", {
@@ -39,7 +40,13 @@ export default function OnboardingForm() {
 
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
-      setError(payload.error || "Unable to complete onboarding.");
+      notify({
+        tone: "error",
+        title: "Onboarding failed",
+        message:
+          [payload.error, payload.detail].filter(Boolean).join(" · ") ||
+          "Unable to complete onboarding.",
+      });
       setLoading(false);
       return;
     }
@@ -102,21 +109,21 @@ export default function OnboardingForm() {
         <div className="flex flex-col gap-3 text-sm">
           <label className="flex flex-col gap-2">
             Default GST rate (Australia)
-            <select
+            <SelectMenu
               value={gstPreset}
-              onChange={(event) => {
-                const value = event.target.value;
+              onChange={(value) => {
                 setGstPreset(value);
                 if (value !== "custom") {
                   setDefaultGstRate(value);
                 }
               }}
-              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2"
-            >
-              <option value="0.10">10% GST (standard)</option>
-              <option value="0.00">0% GST (GST-free)</option>
-              <option value="custom">Custom rate</option>
-            </select>
+              options={[
+                { value: "0.10", label: "10% GST (standard)" },
+                { value: "0.00", label: "0% GST (GST-free)" },
+                { value: "custom", label: "Custom rate" },
+              ]}
+              className="w-full"
+            />
           </label>
           {gstPreset === "custom" ? (
             <label className="flex flex-col gap-2 text-sm">
@@ -160,24 +167,21 @@ export default function OnboardingForm() {
       {step === 4 ? (
         <label className="flex flex-col gap-2 text-sm">
           Location type
-          <select
+          <SelectMenu
             value={locationType}
-            onChange={(event) => setLocationType(event.target.value)}
-            className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2"
-          >
-            {locationTypes.map((type) => (
-              <option key={type.value} value={type.value}>
-                {type.label}
-              </option>
-            ))}
-          </select>
+            onChange={(value) => setLocationType(value)}
+            options={locationTypes.map((type) => ({
+              value: type.value,
+              label: type.label,
+            }))}
+            className="w-full"
+          />
           <span className="text-xs text-slate-400">
             Helps filter inventory and reporting by the type of location.
           </span>
         </label>
       ) : null}
 
-      {error ? <p className="text-sm text-rose-300">{error}</p> : null}
       <div className="flex items-center justify-between gap-3">
         <button
           type="button"

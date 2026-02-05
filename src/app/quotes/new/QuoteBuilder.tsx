@@ -2,19 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import SendQuotePrompt from "@/app/quotes/SendQuotePrompt";
+import { useToast } from "@/components/ToastProvider";
+import { useConfirm } from "@/components/ConfirmProvider";
 
-type PricingItem = {
+type ServiceItem = {
   id: string;
   name: string;
   price: number;
-  type: "fixed" | "addon";
-  isActive: boolean;
-};
-
-type PricingCategory = {
-  id: string;
-  name: string;
-  items: PricingItem[];
 };
 
 type PricingProfile = {
@@ -25,7 +20,6 @@ type PricingProfile = {
   travelSurchargeAmount: number | null;
   gstRate: number;
   pricesIncludeGst: boolean;
-  categories: PricingCategory[];
   customerSummary?: string | null;
   customerExplanation?: string | null;
   comparisonText?: string | null;
@@ -39,6 +33,7 @@ type QuoteItem = {
   quantity: number;
   unitPrice: number;
   pricingItemId?: string;
+  serviceId?: string;
 };
 
 type QuoteExtra = {
@@ -71,13 +66,12 @@ const computeTotals = (
   travelSurchargeApplied: boolean
 ) => {
   const subtotal = items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
-  const minimumCharge = profile?.minimumCharge ?? 0;
-  const minimumChargeApplied = subtotal < minimumCharge;
+  const minimumChargeApplied = false;
   const travelAmount =
     travelSurchargeApplied && profile?.travelSurchargeEnabled
       ? Number(profile?.travelSurchargeAmount ?? 0)
       : 0;
-  let totalBeforeTax = (minimumChargeApplied ? minimumCharge : subtotal) + travelAmount;
+  let totalBeforeTax = subtotal + travelAmount;
   const gstRate = profile?.gstRate ?? 0.1;
   let gstAmount = 0;
   let total = totalBeforeTax;
@@ -92,12 +86,54 @@ const computeTotals = (
   return { subtotal, total, gstAmount, minimumChargeApplied, travelAmount };
 };
 
-export default function QuoteBuilder() {
+type QuoteBuilderProps = {
+  mode?: "new" | "edit";
+  quoteId?: string;
+  activeJob?: {
+    isActive: boolean;
+    jobId?: string | null;
+    jobStatus?: string | null;
+  };
+  onSaved?: (quoteId: string) => void;
+  initialQuote?: {
+    id: string;
+    customerId?: string | null;
+    customerName: string;
+    customerEmail?: string | null;
+    customerPhone?: string | null;
+    siteLine1: string;
+    siteLine2?: string | null;
+    siteSuburb?: string | null;
+    siteState?: string | null;
+    sitePostcode?: string | null;
+    notes?: string | null;
+    travelSurchargeApplied: boolean;
+    items: Array<{
+      id: string;
+      name: string;
+      type: QuoteItem["type"] | string;
+      quantity: number;
+      unitPrice: number;
+      pricingItemId?: string | null;
+    }>;
+  };
+};
+
+export default function QuoteBuilder({
+  mode = "new",
+  quoteId,
+  activeJob,
+  initialQuote,
+  onSaved,
+}: QuoteBuilderProps) {
   const router = useRouter();
+  const isEditMode = mode === "edit";
   const [profile, setProfile] = useState<PricingProfile | null>(null);
+  const [services, setServices] = useState<ServiceItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const { notify } = useToast();
+  const { confirm } = useConfirm();
 
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
@@ -113,6 +149,28 @@ export default function QuoteBuilder() {
   const [siteSuburb, setSiteSuburb] = useState("");
   const [siteState, setSiteState] = useState("");
   const [sitePostcode, setSitePostcode] = useState("");
+  const [addressResults, setAddressResults] = useState<
+    Array<{ description: string; line1: string; suburb: string; state: string; postcode: string }>
+  >([]);
+  const [addressLoading, setAddressLoading] = useState(false);
+  const [addressSelectionLock, setAddressSelectionLock] = useState(false);
+  const [duplicateMatches, setDuplicateMatches] = useState<
+    Array<{
+      id: string;
+      name: string;
+      email: string | null;
+      phone: string | null;
+      siteLine1: string | null;
+      siteSuburb: string | null;
+      siteState: string | null;
+      sitePostcode: string | null;
+      reasons: string[];
+    }>
+  >([]);
+  const [skipDuplicateCheck, setSkipDuplicateCheck] = useState(false);
+  const [forceNewCustomer, setForceNewCustomer] = useState(false);
+  const [checkingDuplicate, setCheckingDuplicate] = useState(false);
+  const [showDuplicateSuggestion, setShowDuplicateSuggestion] = useState(false);
   const [notes, setNotes] = useState("");
 
   const [travelSurchargeApplied, setTravelSurchargeApplied] = useState(false);
@@ -123,8 +181,6 @@ export default function QuoteBuilder() {
   const [manualPrice, setManualPrice] = useState("");
   const [manualQty, setManualQty] = useState("1");
   const [manualOpen, setManualOpen] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
-  const [toastVisible, setToastVisible] = useState(false);
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
   const [recentlyAdded, setRecentlyAdded] = useState<Set<string>>(new Set());
   const [travelSurchargeOverride, setTravelSurchargeOverride] = useState<string>("");
@@ -138,9 +194,10 @@ export default function QuoteBuilder() {
   const [draftId, setDraftId] = useState<string | null>(null);
   const [draftSaving, setDraftSaving] = useState(false);
   const [draftSavedAt, setDraftSavedAt] = useState<number | null>(null);
-  const [draftError, setDraftError] = useState<string | null>(null);
   const [savedTickVisible, setSavedTickVisible] = useState(false);
   const savedTickTimeoutRef = useRef<number | null>(null);
+  const [showSendPrompt, setShowSendPrompt] = useState(false);
+  const [savedQuoteId, setSavedQuoteId] = useState<string | null>(null);
   const [nowTick, setNowTick] = useState(0); // used to refresh relative time display
 
   useEffect(() => {
@@ -155,29 +212,47 @@ export default function QuoteBuilder() {
   }, []);
 
   const searchParams = useSearchParams();
+  const initialLoadRef = useRef(false);
+  const lastDraftErrorRef = useRef(0);
+
+  const notifyDraftError = (message: string) => {
+    const now = Date.now();
+    if (now - lastDraftErrorRef.current < 6000) return;
+    lastDraftErrorRef.current = now;
+    notify({ tone: "error", title: "Draft error", message });
+  };
+
+  const buildRedirectUrl = (nextQuoteId: string) => {
+    const params = new URLSearchParams();
+    params.set("highlight", nextQuoteId);
+    params.set("toast", isEditMode ? "updated" : "created");
+    if (isEditMode && activeJob?.isActive) {
+      params.set("jobToast", "updated");
+    }
+    return `/quotes?${params.toString()}`;
+  };
 
   useEffect(() => {
     const loadProfile = async () => {
       setLoading(true);
-      setError(null);
       try {
-        const response = await fetch("/api/settings/pricing");
-        const payload = await response.json();
-        if (!response.ok) {
-          setError(payload?.error ?? "Unable to load pricing profile.");
+        const [profileResponse, servicesResponse] = await Promise.all([
+          fetch("/api/settings/pricing"),
+          fetch("/api/services"),
+        ]);
+        const payload = await profileResponse.json();
+        const servicesPayload = await servicesResponse.json().catch(() => ({}));
+        if (!profileResponse.ok) {
+          notify({
+            tone: "error",
+            title: "Load failed",
+            message: payload?.error ?? "Unable to load pricing profile.",
+          });
           return;
         }
         const nextProfile = payload.profile as PricingProfile;
-        const normalizedCategories = nextProfile.categories.map((category) => ({
-          ...category,
-          items: category.items.map((item) => ({
-            ...item,
-            price: Number(item.price),
-          })),
-        }));
         setProfile({
           ...nextProfile,
-          categories: normalizedCategories,
           minimumCharge: Number(nextProfile.minimumCharge),
           travelSurchargeAmount:
             nextProfile.travelSurchargeAmount != null
@@ -185,11 +260,27 @@ export default function QuoteBuilder() {
               : null,
           gstRate: Number(nextProfile.gstRate),
         });
-        setTravelSurchargeApplied(Boolean(nextProfile.travelSurchargeEnabled));
+        if (servicesResponse.ok) {
+          const serviceList = servicesPayload.services ?? [];
+          setServices(
+            serviceList
+              .filter((service: { price: number | null }) => service.price != null)
+              .map((service: { id: string; name: string; price: number | null }) => ({
+                id: service.id,
+                name: service.name,
+                price: Number(service.price ?? 0),
+              }))
+          );
+        } else {
+          setServices([]);
+        }
+        if (!isEditMode) {
+          setTravelSurchargeApplied(Boolean(nextProfile.travelSurchargeEnabled));
+        }
 
         // If a draftId was passed in the URL, fetch and load it
         const paramDraft = searchParams?.get?.("draftId");
-        if (paramDraft) {
+        if (!isEditMode && paramDraft) {
           try {
             const dresp = await fetch(`/api/quotes/drafts/${paramDraft}`);
             if (dresp.ok) {
@@ -217,6 +308,7 @@ export default function QuoteBuilder() {
                   quantity: Number(it.quantity ?? 1),
                   unitPrice: Number(it.unitPrice ?? 0),
                   pricingItemId: it.pricingItemId ?? undefined,
+                  serviceId: it.pricingItemId ?? undefined,
                 }));
                 setItems(mappedItems);
               }
@@ -226,7 +318,7 @@ export default function QuoteBuilder() {
           }
         }
       } catch (err) {
-        setError("Unable to load pricing profile.");
+        notify({ tone: "error", title: "Load failed", message: "Unable to load pricing profile." });
       } finally {
         setLoading(false);
       }
@@ -234,7 +326,145 @@ export default function QuoteBuilder() {
 
     void loadProfile();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isEditMode, searchParams]);
+
+  useEffect(() => {
+    if (initialLoadRef.current || !initialQuote) return;
+    initialLoadRef.current = true;
+    setCustomerId(initialQuote.customerId ?? null);
+    setCustomerName(initialQuote.customerName ?? "");
+    setCustomerEmail(initialQuote.customerEmail ?? "");
+    setCustomerPhone(initialQuote.customerPhone ?? "");
+    setCustomerSearch(initialQuote.customerName ?? "");
+    setSiteLine1(initialQuote.siteLine1 ?? "");
+    setSiteLine2(initialQuote.siteLine2 ?? "");
+    setSiteSuburb(initialQuote.siteSuburb ?? "");
+    setSiteState(initialQuote.siteState ?? "");
+    setSitePostcode(initialQuote.sitePostcode ?? "");
+    setNotes(initialQuote.notes ?? "");
+    setTravelSurchargeApplied(Boolean(initialQuote.travelSurchargeApplied));
+    setItems(
+      (initialQuote.items ?? []).map((item) => ({
+        id: item.id,
+        name: item.name,
+        type: (item.type as QuoteItem["type"]) ?? "labour",
+        quantity: Number(item.quantity ?? 1),
+        unitPrice: Number(item.unitPrice ?? 0),
+        pricingItemId: item.pricingItemId ?? undefined,
+        serviceId: item.pricingItemId ?? undefined,
+      }))
+    );
+  }, [initialQuote]);
+
+  useEffect(() => {
+    const query = siteLine1.trim();
+    if (addressSelectionLock) {
+      setAddressSelectionLock(false);
+      setAddressResults([]);
+      setAddressLoading(false);
+      return;
+    }
+    if (query.length < 3) {
+      setAddressResults([]);
+      setAddressLoading(false);
+      return;
+    }
+
+    const handle = window.setTimeout(async () => {
+      setAddressLoading(true);
+      try {
+        const response = await fetch(
+          `/api/address/autocomplete?q=${encodeURIComponent(query)}`
+        );
+        const payload = await response.json().catch(() => ({}));
+        setAddressResults(payload.suggestions ?? []);
+      } catch (err) {
+        setAddressResults([]);
+      } finally {
+        setAddressLoading(false);
+      }
+    }, 250);
+
+    return () => window.clearTimeout(handle);
+  }, [siteLine1]);
+
+  const applyAddress = (result: {
+    line1: string;
+    suburb: string;
+    state: string;
+    postcode: string;
+  }) => {
+    setAddressSelectionLock(true);
+    setSiteLine1(result.line1 ?? "");
+    setSiteSuburb(result.suburb ?? "");
+    setSiteState(result.state ?? "");
+    setSitePostcode(result.postcode ?? "");
+    setAddressResults([]);
+  };
+
+  useEffect(() => {
+    if (isEditMode || customerId || skipDuplicateCheck) {
+      setDuplicateMatches([]);
+      setShowDuplicateSuggestion(false);
+      return;
+    }
+
+    const hasSignals =
+      Boolean(customerEmail?.trim()) ||
+      Boolean(customerPhone?.trim()) ||
+      Boolean(siteLine1?.trim());
+
+    if (!hasSignals || !customerName.trim()) {
+      setDuplicateMatches([]);
+      setShowDuplicateSuggestion(false);
+      return;
+    }
+
+    const handle = window.setTimeout(async () => {
+      setCheckingDuplicate(true);
+      try {
+        const response = await fetch("/api/customers/match", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: customerName,
+            email: customerEmail,
+            phone: customerPhone,
+            siteLine1,
+            siteSuburb,
+            siteState,
+            sitePostcode,
+          }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (response.ok && payload.matches?.length) {
+          setDuplicateMatches(payload.matches);
+          setShowDuplicateSuggestion(true);
+        } else {
+          setDuplicateMatches([]);
+          setShowDuplicateSuggestion(false);
+        }
+      } catch (err) {
+        setDuplicateMatches([]);
+        setShowDuplicateSuggestion(false);
+      } finally {
+        setCheckingDuplicate(false);
+      }
+    }, 400);
+
+    return () => window.clearTimeout(handle);
+  }, [
+    isEditMode,
+    customerId,
+    customerName,
+    customerEmail,
+    customerPhone,
+    siteLine1,
+    siteSuburb,
+    siteState,
+    sitePostcode,
+    skipDuplicateCheck,
+  ]);
 
   useEffect(() => {
     const query = customerSearch.trim();
@@ -269,14 +499,44 @@ export default function QuoteBuilder() {
 
   const availableItems = useMemo(() => {
     if (!profile) return [];
-    return profile.categories
-      .flatMap((category) =>
-        category.items
-          .filter((item) => item.isActive)
-          .map((item) => ({ ...item, category: category.name }))
-      )
-      .filter((item) => item.name.toLowerCase().includes(search.toLowerCase()));
-  }, [profile, search]);
+    const rawSearch = search.toLowerCase().trim();
+    const normalizedSearch = rawSearch.replace(/\s+/g, "");
+    const tokens = rawSearch.split(/\s+/).filter(Boolean);
+
+    const levenshtein = (a: string, b: string) => {
+      const matrix = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+      for (let i = 0; i <= a.length; i += 1) matrix[i][0] = i;
+      for (let j = 0; j <= b.length; j += 1) matrix[0][j] = j;
+      for (let i = 1; i <= a.length; i += 1) {
+        for (let j = 1; j <= b.length; j += 1) {
+          const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+          matrix[i][j] = Math.min(
+            matrix[i - 1][j] + 1,
+            matrix[i][j - 1] + 1,
+            matrix[i - 1][j - 1] + cost
+          );
+        }
+      }
+      return matrix[a.length][b.length];
+    };
+
+    const fuzzyMatch = (text: string, query: string) => {
+      if (!query) return true;
+      if (text.includes(query)) return true;
+      const distance = levenshtein(text, query);
+      const similarity = 1 - distance / Math.max(text.length, query.length, 1);
+      return similarity >= 0.72;
+    };
+
+    return services.filter((item) => {
+        const name = item.name.toLowerCase();
+        const normalizedName = name.replace(/\s+/g, "");
+        if (!rawSearch) return true;
+        if (normalizedName.includes(normalizedSearch)) return true;
+        if (tokens.every((token) => name.includes(token))) return true;
+        return fuzzyMatch(normalizedName, normalizedSearch);
+      });
+  }, [profile, search, services]);
 
   const extraLineItems = items.flatMap((item) =>
     (extrasByItem[item.id] ?? []).map((extra) => ({
@@ -333,12 +593,11 @@ export default function QuoteBuilder() {
         } catch (err) {
           // ignore
         }
-        setDraftError(msg);
+        notifyDraftError(msg);
         return null;
       }
       const payload = await response.json().catch(() => null);
       if (payload?.draftId) {
-        setDraftError(null);
         setDraftId(payload.draftId);
         setDraftSavedAt(Date.now());
 
@@ -349,7 +608,7 @@ export default function QuoteBuilder() {
 
         return payload.draftId;
       }
-      setDraftError("Unable to create draft");
+      notifyDraftError("Unable to create draft");
       return null;
     } catch (err) {
       // ignore: draft creation failure shouldn't block the UX
@@ -400,7 +659,6 @@ export default function QuoteBuilder() {
       });
 
       if (response.ok) {
-        setDraftError(null);
         setDraftSavedAt(Date.now());
 
         // show a tick briefly
@@ -415,7 +673,7 @@ export default function QuoteBuilder() {
         } catch (err) {
           // ignore
         }
-        setDraftError(msg);
+        notifyDraftError(msg);
       }
     } catch (err) {
       console.warn("updateDraft error", err);
@@ -436,15 +694,16 @@ export default function QuoteBuilder() {
 
   // Create draft when profile loads (so we have pricing defaults) or on mount if not already created
   useEffect(() => {
+    if (isEditMode) return;
     if (!draftId && !loading && profile) {
       void createDraft();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile, loading]);
+  }, [profile, loading, isEditMode]);
 
   // Auto-save draft when important fields change (debounced). If we don't yet have a draft, create one.
   useEffect(() => {
-    if (loading) return;
+    if (isEditMode || loading) return;
 
     const handle = setTimeout(async () => {
       try {
@@ -458,13 +717,13 @@ export default function QuoteBuilder() {
         }
       } catch (err) {
         console.warn("autosave error", err);
-        setDraftError("Autosave failed");
+        notifyDraftError("Autosave failed");
       }
     }, 900);
 
     return () => clearTimeout(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customerName, customerEmail, customerPhone, siteLine1, siteLine2, siteSuburb, siteState, sitePostcode, notes, travelSurchargeApplied, items, extrasByItem]);
+  }, [customerName, customerEmail, customerPhone, siteLine1, siteLine2, siteSuburb, siteState, sitePostcode, notes, travelSurchargeApplied, items, extrasByItem, isEditMode]);
 
   const derivedProfile =
     profile && travelSurchargeOverride.trim()
@@ -484,12 +743,12 @@ export default function QuoteBuilder() {
       ? Number(derivedProfile?.travelSurchargeAmount ?? 0)
       : 0;
 
-  const addPricingItem = (item: PricingItem) => {
+  const addPricingItem = (item: ServiceItem) => {
     setItems((prev) => {
-      const existing = prev.find((line) => line.pricingItemId === item.id);
+      const existing = prev.find((line) => (line.serviceId ?? line.pricingItemId) === item.id);
       if (existing) {
         return prev.map((line) =>
-          line.pricingItemId === item.id
+          (line.serviceId ?? line.pricingItemId) === item.id
             ? { ...line, quantity: line.quantity + 1 }
             : line
         );
@@ -499,10 +758,10 @@ export default function QuoteBuilder() {
         {
           id: crypto.randomUUID(),
           name: item.name,
-          type: item.type,
+          type: "fixed",
           quantity: 1,
           unitPrice: Number(item.price),
-          pricingItemId: item.id,
+          serviceId: item.id,
         },
       ];
     });
@@ -515,29 +774,26 @@ export default function QuoteBuilder() {
         return next;
       });
     }, 700);
-    setToast(`Added "${item.name}" to quote items.`);
-    setToastVisible(true);
-    setTimeout(() => setToastVisible(false), 1800);
-    setTimeout(() => setToast(null), 2200);
+    notify({ tone: "success", title: "Added", message: `Added "${item.name}" to quote items.` });
   };
 
-  const decrementPricingItem = (item: PricingItem) => {
+  const decrementPricingItem = (item: ServiceItem) => {
     setItems((prev) => {
-      const existing = prev.find((line) => line.pricingItemId === item.id);
+      const existing = prev.find((line) => (line.serviceId ?? line.pricingItemId) === item.id);
       if (!existing) return prev;
       if (existing.quantity <= 1) {
-        return prev.filter((line) => line.pricingItemId !== item.id);
+        return prev.filter((line) => (line.serviceId ?? line.pricingItemId) !== item.id);
       }
       return prev.map((line) =>
-        line.pricingItemId === item.id
+        (line.serviceId ?? line.pricingItemId) === item.id
           ? { ...line, quantity: Math.max(1, line.quantity - 1) }
           : line
       );
     });
   };
 
-  const getCatalogQty = (pricingItemId: string) =>
-    items.find((line) => line.pricingItemId === pricingItemId)?.quantity ?? 0;
+  const getCatalogQty = (catalogId: string) =>
+    items.find((line) => (line.serviceId ?? line.pricingItemId) === catalogId)?.quantity ?? 0;
 
   const addManualItem = () => {
     if (!manualName.trim()) return;
@@ -626,30 +882,46 @@ export default function QuoteBuilder() {
 
   const saveQuote = async () => {
     // Client-side validation
-    setError(null);
     if (!customerName.trim()) {
-      setError("Customer name is required.");
+      notify({ tone: "error", title: "Missing customer", message: "Customer name is required." });
       customerNameRef.current?.focus();
       return;
     }
-    if (!siteLine1.trim()) {
-      setError("Site address is required.");
+    if (!siteLine1.trim() && !customerId) {
+      notify({ tone: "error", title: "Missing address", message: "Site address is required." });
       siteLine1Ref.current?.focus();
       return;
     }
 
-    setSaving(true);
-
     try {
-      const response = await fetch("/api/quotes", {
-        method: "POST",
+      if (isEditMode && !quoteId) {
+        notify({ tone: "error", title: "Missing quote", message: "Missing quote id." });
+        return;
+      }
+      if (isEditMode && activeJob?.isActive) {
+        const ok = await confirm({
+          title: "Update job scope",
+          message:
+            "This quote is linked to an active job. Updating it will update the job scope. Continue?",
+          confirmLabel: "Update quote",
+          tone: "danger",
+        });
+        if (!ok) {
+          return;
+        }
+      }
+
+      setSaving(true);
+
+      const response = await fetch(isEditMode ? `/api/quotes/${quoteId}` : "/api/quotes", {
+        method: isEditMode ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          customerId,
+          ...(isEditMode ? {} : { draftId, customerId, forceNewCustomer }),
           customerName,
           customerEmail,
           customerPhone,
-          siteLine1,
+          siteLine1: customerId && !siteLine1.trim() ? "" : siteLine1,
           siteLine2,
           siteSuburb,
           siteState,
@@ -683,12 +955,16 @@ export default function QuoteBuilder() {
       }
 
       if (!response.ok) {
-        setError(payload?.error ?? `Server error (${response.status} ${response.statusText})`);
+        notify({
+          tone: "error",
+          title: "Save failed",
+          message: payload?.error ?? `Server error (${response.status} ${response.statusText})`,
+        });
         return;
       }
 
       // Delete the draft if one exists (best-effort)
-      if (draftId) {
+      if (!isEditMode && draftId) {
         try {
           await deleteDraft(draftId);
         } catch (err) {
@@ -696,9 +972,23 @@ export default function QuoteBuilder() {
         }
       }
 
-      router.push("/quotes");
+      const nextQuoteId = isEditMode ? payload?.quote?.id ?? quoteId : payload?.quoteId ?? null;
+      if (nextQuoteId) {
+        if (onSaved) {
+          onSaved(nextQuoteId);
+          return;
+        }
+        setSavedQuoteId(nextQuoteId);
+        setShowSendPrompt(true);
+      } else {
+        router.push(buildRedirectUrl(quoteId ?? ""));
+      }
     } catch (err) {
-      setError("Unable to save quote. Please check your connection and try again.");
+      notify({
+        tone: "error",
+        title: "Save failed",
+        message: "Unable to save quote. Please check your connection and try again.",
+      });
     } finally {
       setSaving(false);
     }
@@ -714,6 +1004,21 @@ export default function QuoteBuilder() {
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+      {showSendPrompt && savedQuoteId ? (
+        <SendQuotePrompt
+          quoteId={savedQuoteId}
+          customerEmail={customerEmail}
+          customerName={customerName}
+          onClose={() => {
+            setShowSendPrompt(false);
+            router.push(buildRedirectUrl(savedQuoteId));
+          }}
+          onSent={() => {
+            setShowSendPrompt(false);
+            router.push(buildRedirectUrl(savedQuoteId));
+          }}
+        />
+      ) : null}
       <section className="rounded-3xl border border-slate-800 bg-slate-900 p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -822,7 +1127,13 @@ export default function QuoteBuilder() {
               );
             })}
             {!availableItems.length ? (
-              <p className="text-sm text-slate-500">No matches.</p>
+              services.length ? (
+                <p className="text-sm text-slate-500">No matches.</p>
+              ) : (
+                <p className="text-sm text-slate-500">
+                  No services yet. Add them in the Services page.
+                </p>
+              )
             ) : null}
           </div>
         </div>
@@ -1183,12 +1494,103 @@ export default function QuoteBuilder() {
                   </button>
                 </div>
               ) : null}
+              {showDuplicateSuggestion && duplicateMatches.length ? (
+                <div className="rounded-xl border border-amber-400/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-[0.3em] text-amber-200/70">
+                        Possible match
+                      </p>
+                      <p className="mt-1 text-sm text-amber-100">
+                        This client already exists. Use it?
+                      </p>
+                    </div>
+                    {checkingDuplicate ? (
+                      <span className="text-[10px] text-amber-200/70">Checking…</span>
+                    ) : null}
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {duplicateMatches.map((match) => (
+                      <button
+                        key={match.id}
+                        type="button"
+                        onClick={() => {
+                          setCustomerId(match.id);
+                          setCustomerName(match.name ?? "");
+                          setCustomerEmail(match.email ?? "");
+                          setCustomerPhone(match.phone ?? "");
+                          setCustomerSearch(match.name ?? "");
+                          setSiteLine1(match.siteLine1 ?? "");
+                          setSiteLine2("");
+                          setSiteSuburb(match.siteSuburb ?? "");
+                          setSiteState(match.siteState ?? "");
+                          setSitePostcode(match.sitePostcode ?? "");
+                          setCustomerResults([]);
+                          setShowDuplicateSuggestion(false);
+                          setSkipDuplicateCheck(true);
+                          setForceNewCustomer(false);
+                        }}
+                        className="w-full rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-left text-xs text-amber-100 hover:bg-amber-500/20"
+                      >
+                        <p className="font-semibold">{match.name}</p>
+                        <p className="text-[10px] text-amber-200/80">
+                          {match.email ?? "No email"} · {match.phone ?? "No phone"}
+                        </p>
+                        <p className="text-[10px] text-amber-200/70">
+                          {[match.siteLine1, match.siteSuburb, match.siteState, match.sitePostcode]
+                            .filter(Boolean)
+                            .join(", ")}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowDuplicateSuggestion(false);
+                      }}
+                      className="rounded-lg border border-amber-400/40 px-3 py-1.5 text-[10px] font-semibold text-amber-100 hover:bg-amber-500/20"
+                    >
+                      Dismiss
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowDuplicateSuggestion(false);
+                        setSkipDuplicateCheck(true);
+                        setForceNewCustomer(true);
+                      }}
+                      className="rounded-lg border border-emerald-400/60 px-3 py-1.5 text-[10px] font-semibold text-emerald-200 hover:bg-emerald-500/10"
+                    >
+                      Create new client
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               <div className="flex items-center my-2">
                 <div className="flex-1 border-t border-slate-800" />
                 <span className="mx-3 text-xs text-slate-500 uppercase tracking-[0.3em]">OR</span>
                 <div className="flex-1 border-t border-slate-800" />
               </div>
-              <label className="text-xs uppercase tracking-[0.3em] text-slate-500">Enter customer details</label>
+              <details
+                className={`rounded-xl border border-slate-800 bg-slate-950/40 p-4 transition-opacity ${
+                  customerId ? "opacity-60" : "opacity-100"
+                }`}
+                open={!customerId}
+              >
+                <summary
+                  className="flex cursor-pointer list-none items-center justify-between text-xs uppercase tracking-[0.3em] text-slate-500"
+                >
+                  Enter customer details
+                  <span className="text-[10px]">▼</span>
+                </summary>
+                <p className="mt-2 text-xs text-slate-500">
+                  {customerId
+                    ? "Linked customer selected. Clear selection to edit details."
+                    : "Enter customer details to create a new customer."}
+                </p>
+              </details>
             </div>
             <input
               placeholder="Customer name"
@@ -1198,7 +1600,8 @@ export default function QuoteBuilder() {
                 if (customerId) setCustomerId(null);
               }}
               ref={customerNameRef}
-              className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+              disabled={Boolean(customerId)}
+              className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
             />
             <div className="grid gap-4 sm:grid-cols-2">
               <input
@@ -1208,7 +1611,8 @@ export default function QuoteBuilder() {
                   setCustomerEmail(event.target.value);
                   if (customerId) setCustomerId(null);
                 }}
-                className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+                disabled={Boolean(customerId)}
+                className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
               />
               <input
                 placeholder="Customer phone"
@@ -1217,40 +1621,68 @@ export default function QuoteBuilder() {
                   setCustomerPhone(event.target.value);
                   if (customerId) setCustomerId(null);
                 }}
-                className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+                disabled={Boolean(customerId)}
+                className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
               />
             </div>
-            <input
-              placeholder="Street address"
-              value={siteLine1}
-              onChange={(event) => setSiteLine1(event.target.value)}
-              ref={siteLine1Ref}
-              className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100"
-            />
+            <div className="relative">
+              <input
+                placeholder="Street address"
+                value={siteLine1}
+                onChange={(event) => setSiteLine1(event.target.value)}
+                ref={siteLine1Ref}
+                disabled={Boolean(customerId)}
+                className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+              />
+              {addressLoading ? (
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500">
+                  Searching…
+                </span>
+              ) : null}
+              {addressResults.length ? (
+                <div className="absolute z-20 mt-2 w-full overflow-hidden rounded-xl border border-slate-800 bg-slate-950 shadow-lg">
+                  {addressResults.map((result) => (
+                    <button
+                      key={result.description}
+                      type="button"
+                      onClick={() => applyAddress(result)}
+                      className="flex w-full items-start gap-2 px-3 py-2 text-left text-sm text-slate-100 hover:bg-slate-900"
+                    >
+                      <span className="text-slate-500">📍</span>
+                      <span className="font-semibold">{result.description}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
             <input
               placeholder="Unit / suite (optional)"
               value={siteLine2}
               onChange={(event) => setSiteLine2(event.target.value)}
-              className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+              disabled={Boolean(customerId)}
+              className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
             />
             <div className="grid gap-4 sm:grid-cols-3">
               <input
                 placeholder="Suburb"
                 value={siteSuburb}
                 onChange={(event) => setSiteSuburb(event.target.value)}
-                className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+                disabled={Boolean(customerId)}
+                className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
               />
               <input
                 placeholder="State"
                 value={siteState}
                 onChange={(event) => setSiteState(event.target.value)}
-                className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+                disabled={Boolean(customerId)}
+                className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
               />
               <input
                 placeholder="Postcode"
                 value={sitePostcode}
                 onChange={(event) => setSitePostcode(event.target.value)}
-                className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+                disabled={Boolean(customerId)}
+                className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
               />
             </div>
             <label className="flex items-center gap-2 text-xs text-slate-300">
@@ -1318,12 +1750,6 @@ export default function QuoteBuilder() {
               <span>Subtotal</span>
               <span>{formatCurrency(totals.subtotal)}</span>
             </div>
-            {totals.minimumChargeApplied ? (
-              <div className="flex items-center justify-between text-amber-300">
-                <span>Minimum charge applied</span>
-                <span>{formatCurrency(profile.minimumCharge)}</span>
-              </div>
-            ) : null}
             {travelSurchargeApplied && profile.travelSurchargeEnabled ? (
               <div className="flex items-center justify-between">
                 <span>Travel surcharge</span>
@@ -1349,102 +1775,102 @@ export default function QuoteBuilder() {
               className="mt-3 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100"
             />
           </div>
-          {error ? <p className="mt-3 text-sm text-rose-400">{error}</p> : null}
-          <div className="mt-3 flex items-center justify-between gap-3">
-            <div className="flex flex-col">
-              <p className="text-xs text-slate-500 inline-flex items-center gap-2">
-                {draftId ? (
-                  draftSaving ? (
-                    <>
-                      <svg className="h-4 w-4 animate-spin text-slate-400" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
-                      </svg>
-                      <span>Saving draft…</span>
-                    </>
-                  ) : draftSavedAt ? (
-                    <>
-                      {savedTickVisible ? (
-                        <svg className="h-4 w-4 text-emerald-400" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
-                          <path fill="currentColor" d="M9.29 16.29 4.7 11.7 6.11 10.29 9.29 13.46 17.89 4.86 19.3 6.27z" />
+          {!isEditMode ? (
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <div className="flex flex-col">
+                <p className="text-xs text-slate-500 inline-flex items-center gap-2">
+                  {draftId ? (
+                    draftSaving ? (
+                      <>
+                        <svg className="h-4 w-4 animate-spin text-slate-400" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
                         </svg>
-                      ) : (
-                        <svg className="h-4 w-4 text-slate-500" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
-                          <path fill="currentColor" d="M9.29 16.29 4.7 11.7 6.11 10.29 9.29 13.46 17.89 4.86 19.3 6.27z" />
-                        </svg>
-                      )}
-                      <span>{formatRelativeTime(draftSavedAt)}</span>
-                    </>
+                        <span>Saving draft…</span>
+                      </>
+                    ) : draftSavedAt ? (
+                      <>
+                        {savedTickVisible ? (
+                          <svg className="h-4 w-4 text-emerald-400" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+                            <path fill="currentColor" d="M9.29 16.29 4.7 11.7 6.11 10.29 9.29 13.46 17.89 4.86 19.3 6.27z" />
+                          </svg>
+                        ) : (
+                          <svg className="h-4 w-4 text-slate-500" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+                            <path fill="currentColor" d="M9.29 16.29 4.7 11.7 6.11 10.29 9.29 13.46 17.89 4.86 19.3 6.27z" />
+                          </svg>
+                        )}
+                        <span>{formatRelativeTime(draftSavedAt)}</span>
+                      </>
+                    ) : (
+                      "Draft saved"
+                    )
                   ) : (
-                    "Draft saved"
-                  )
-                ) : (
-                  "Draft not created yet"
-                )}
-              </p>
-              {draftError ? <p className="text-xs text-rose-400 mt-1">{draftError}</p> : null}
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={async () => {
-                  if (draftSaving) return;
-
-                  // optimistic timestamp and tick so UI feels immediate
-                  const optimistic = Date.now();
-                  setDraftSavedAt(optimistic);
-                  setSavedTickVisible(true);
-
-                  if (draftId) {
-                    try {
-                      await updateDraft(draftId);
-                    } catch (err) {
-                      // show error and clear optimistic tick
-                      setDraftError("Unable to save draft");
-                      setSavedTickVisible(false);
-                    }
-                  } else {
-                    try {
-                      const id = await createDraft();
-                      if (id) {
-                        // make sure totals update on server
-                        await updateDraft(id);
-                      }
-                    } catch (err) {
-                      setDraftError("Unable to save draft");
-                      setSavedTickVisible(false);
-                    }
-                  }
-                }}
-                disabled={draftSaving}
-                className="rounded-full border border-slate-700/50 bg-slate-900/40 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-slate-200 disabled:opacity-50"
-              >
-                {draftSaving ? "Saving..." : "Save draft"}
-              </button>
-
-              {draftId ? (
+                    "Draft not created yet"
+                  )}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={async () => {
-                    await deleteDraft(draftId);
-                    setDraftId(null);
-                    setDraftSavedAt(null);
-                    setSavedTickVisible(false);
+                    if (draftSaving) return;
+
+                    // optimistic timestamp and tick so UI feels immediate
+                    const optimistic = Date.now();
+                    setDraftSavedAt(optimistic);
+                    setSavedTickVisible(true);
+
+                    if (draftId) {
+                      try {
+                        await updateDraft(draftId);
+                      } catch (err) {
+                        // show error and clear optimistic tick
+                        notifyDraftError("Unable to save draft");
+                        setSavedTickVisible(false);
+                      }
+                    } else {
+                      try {
+                        const id = await createDraft();
+                        if (id) {
+                          // make sure totals update on server
+                          await updateDraft(id);
+                        }
+                      } catch (err) {
+                        notifyDraftError("Unable to save draft");
+                        setSavedTickVisible(false);
+                      }
+                    }
                   }}
-                  className="rounded-full border border-rose-400/30 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-rose-200"
+                  disabled={draftSaving}
+                  className="rounded-full border border-slate-700/50 bg-slate-900/40 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-slate-200 disabled:opacity-50"
                 >
-                  Discard
+                  {draftSaving ? "Saving..." : "Save draft"}
                 </button>
-              ) : null}
+
+                {draftId ? (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await deleteDraft(draftId);
+                      setDraftId(null);
+                      setDraftSavedAt(null);
+                      setSavedTickVisible(false);
+                    }}
+                    className="rounded-full border border-rose-400/30 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-rose-200"
+                  >
+                    Discard
+                  </button>
+                ) : null}
+              </div>
             </div>
-          </div>
+          ) : null}
           <button
             type="button"
             onClick={saveQuote}
             disabled={saving}
             className="mt-4 w-full rounded-lg border border-emerald-400/60 px-4 py-3 text-sm font-semibold text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-50"
           >
-            {saving ? "Saving..." : "Save quote"}
+            {saving ? "Saving..." : isEditMode ? "Update quote" : "Save quote"}
           </button>
         </div>
         <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 text-sm text-slate-300">
@@ -1455,15 +1881,6 @@ export default function QuoteBuilder() {
           <p className="mt-3 text-slate-400">{profile.complianceText}</p>
         </div>
       </section>
-      {toast ? (
-        <div
-          className={`fixed left-1/2 top-6 z-50 -translate-x-1/2 rounded-full border border-emerald-400/50 bg-slate-950 px-5 py-2 text-xs font-semibold text-emerald-200 shadow-lg transition-all duration-300 ${
-            toastVisible ? "translate-y-0 opacity-100" : "-translate-y-3 opacity-0"
-          }`}
-        >
-          {toast}
-        </div>
-      ) : null}
       <style jsx>{`
         @keyframes tick-draw {
           from {

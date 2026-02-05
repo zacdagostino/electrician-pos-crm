@@ -1,9 +1,10 @@
 import AppShell from "@/components/AppShell";
 import { requireOrg } from "@/lib/authz";
 import { db } from "@/lib/db";
+import RoleIcon from "@/components/RoleIcon";
 
 export default async function DashboardPage() {
-  const { session, orgId } = await requireOrg();
+  const { session, orgId, membership } = await requireOrg();
   const org = await db.org.findUnique({ where: { id: orgId } });
 
   return (
@@ -11,7 +12,15 @@ export default async function DashboardPage() {
       userName={session.user?.name}
       orgName={org?.name ?? orgId}
       orgLogoUrl={org?.logoUrl ?? null}
-      title={`Welcome, ${session.user?.name ?? "Electrician"}`}
+      userRole={membership?.tradeRole ?? null}
+      title={
+        <span className="inline-flex items-center gap-2">
+          Welcome, {session.user?.name ?? "Electrician"}
+          {membership?.tradeRole ? (
+            <RoleIcon role={membership.tradeRole} className="h-5 w-5 text-slate-400" />
+          ) : null}
+        </span>
+      }
       subtitle={`Active org: ${org?.name ?? orgId}`}
     >
       <div className="space-y-6">

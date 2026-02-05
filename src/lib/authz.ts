@@ -39,7 +39,14 @@ export const requireOrg = async () => {
   if (!orgId) {
     redirect("/select-org");
   }
-  return { session, orgId };
+  const membership = await db.orgMember.findFirst({
+    where: {
+      userId: session.user.id,
+      orgId,
+      status: "active",
+    },
+  });
+  return { session, orgId, membership };
 };
 
 export const requireRole = async (requiredRole: OrgRole) => {
