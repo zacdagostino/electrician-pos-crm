@@ -57,9 +57,7 @@ export const parseReceiptText = (text: string): ParsedReceipt => {
 
   const items = lines
     .map(parseLineItem)
-    .filter((item): item is { name: string; quantity?: number; unitPrice?: number } =>
-      Boolean(item)
-    );
+    .filter((item): item is NonNullable<ReturnType<typeof parseLineItem>> => item !== null);
 
   return {
     vendorName,

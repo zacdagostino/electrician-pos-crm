@@ -509,7 +509,8 @@ export default function QuoteBuilder({
   }, [profile, search, services]);
 
   const extraLineItems = items.flatMap((item) =>
-    (extrasByItem[item.id] ?? []).map((extra) => ({
+    (extrasByItem[item.id] ?? []).map((extra, index) => ({
+      id: `extra-${item.id}-${index}`,
       name: `${item.name} — ${extra.description}`,
       type: "adjustment" as const,
       quantity: 1,

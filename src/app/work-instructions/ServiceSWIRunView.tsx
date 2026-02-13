@@ -93,15 +93,17 @@ export default function ServiceSWIRunView({ serviceId, serviceName, content }: S
   );
 
   const totalSteps = content.steps.length;
-  const getStepProgress = (stepId: string): StepProgress => ({
-    checklist: [],
-    photoCaptured: false,
-    photoName: "",
-    photoException: false,
-    photoExceptionReason: "",
-    testResult: "",
-    ...progress[stepId],
-  });
+  const getStepProgress = (stepId: string): StepProgress => {
+    const existing = progress[stepId];
+    return {
+      checklist: existing?.checklist ?? [],
+      photoCaptured: existing?.photoCaptured ?? false,
+      photoName: existing?.photoName ?? "",
+      photoException: existing?.photoException ?? false,
+      photoExceptionReason: existing?.photoExceptionReason ?? "",
+      testResult: existing?.testResult ?? "",
+    };
+  };
   function isStepReady(step: SWIStep, state: StepProgress) {
     const checklistLines = step.whatToDo.filter((line) => line.trim().length > 0);
     const checklistComplete =

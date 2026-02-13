@@ -57,6 +57,7 @@ export default async function QuotesPage({
     return {
     id: q.id,
     customerName: q.customerName,
+    customerEmail: q.customerEmail ?? null,
     customerId: q.customerId ?? null,
     siteLine1: q.siteLine1,
     siteLine2: q.siteLine2,
@@ -81,6 +82,7 @@ export default async function QuotesPage({
     id: q.id,
     customerName: q.customerName,
     siteLine1: q.siteLine1,
+    status: q.status,
     total: Number(q.total ?? 0),
     createdAt: q.createdAt.toISOString(),
     updatedAt: q.updatedAt?.toISOString() ?? null,

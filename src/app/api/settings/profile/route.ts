@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import type { OrgRole, TradeRole } from "@prisma/client";
 import { getServerAuthSession } from "@/auth";
 import { db } from "@/lib/db";
 import { getSelectedOrgId } from "@/lib/authz";
@@ -13,8 +14,8 @@ export const PATCH = async (req: Request) => {
     const body = await req.json();
     const name = body.name ? String(body.name).trim() : null;
     const phone = body.phone ? String(body.phone).trim() : null;
-    const tradeRole = body.tradeRole ? String(body.tradeRole) : null;
-    const accessRole = body.accessRole ? String(body.accessRole) : null;
+    const tradeRole = body.tradeRole ? (String(body.tradeRole) as TradeRole) : null;
+    const accessRole = body.accessRole ? (String(body.accessRole) as OrgRole) : null;
     if (tradeRole && !["electrician", "apprentice", "office"].includes(tradeRole)) {
       return NextResponse.json({ error: "Invalid trade role" }, { status: 400 });
     }

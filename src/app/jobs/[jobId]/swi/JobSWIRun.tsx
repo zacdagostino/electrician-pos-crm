@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import type { ReactElement } from "react";
 import { useToast } from "@/components/ToastProvider";
 
 type SWIPhase = {
@@ -71,7 +72,7 @@ type JobSWIRunProps = {
 
 const highlightText = (text: string, definitions: LibraryItem[]) => {
   if (!definitions.length || !text) return text;
-  let nodes: Array<string | JSX.Element> = [text];
+  let nodes: Array<string | ReactElement> = [text];
   const sorted = [...definitions].sort((a, b) => b.name.length - a.name.length);
   sorted.forEach((def) => {
     const regex = new RegExp(`\\b(${def.name.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")})\\b`, "gi");

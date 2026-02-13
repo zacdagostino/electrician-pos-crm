@@ -1,6 +1,18 @@
 import { NextResponse } from "next/server";
 import { getServerAuthSession } from "@/auth";
 
+type PhotonFeature = {
+  properties?: Record<string, string | undefined>;
+};
+
+type AddressSuggestion = {
+  description: string;
+  line1: string;
+  suburb: string;
+  state: string;
+  postcode: string;
+};
+
 export const GET = async (req: Request) => {
   const session = await getServerAuthSession();
   if (!session?.user?.id) {
@@ -24,11 +36,11 @@ export const GET = async (req: Request) => {
     return NextResponse.json({ suggestions: [] });
   }
 
-  const features = Array.isArray(payload.features) ? payload.features : [];
+  const features: PhotonFeature[] = Array.isArray(payload.features) ? payload.features : [];
   const inputHouseMatch = input.match(/^\s*(\d+[A-Za-z]?(?:-\d+[A-Za-z]?)?)\b/);
   const inputHouse = inputHouseMatch ? inputHouseMatch[1] : "";
 
-  const suggestions = features.map((feature) => {
+  const suggestions = features.map((feature): AddressSuggestion | null => {
     const props = feature?.properties ?? {};
     const street = props.street ?? props.name ?? "";
     const house = props.housenumber ?? "";
@@ -53,5 +65,9 @@ export const GET = async (req: Request) => {
     return { description, line1, suburb, state, postcode };
   });
 
-  return NextResponse.json({ suggestions: suggestions.filter(Boolean) });
+  return NextResponse.json({
+    suggestions: suggestions.filter((suggestion): suggestion is AddressSuggestion =>
+      Boolean(suggestion)
+    ),
+  });
 };

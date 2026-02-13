@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
+import type { QuoteStatus } from "@prisma/client";
 import { getServerAuthSession } from "@/auth";
 import { getSelectedOrgId } from "@/lib/authz";
 import { db } from "@/lib/db";
@@ -83,6 +84,11 @@ export const GET = async (_req: Request, { params }: Params) => {
   if (!orgId) {
     return NextResponse.json({ error: "No org selected" }, { status: 400 });
   }
+  const member = await db.orgMember.findFirst({
+    where: { orgId, userId: session.user.id },
+    select: { id: true },
+  });
+  const changedByMemberId = member?.id ?? null;
 
   const quoteId = await getQuoteId(params);
   const quote = await db.quote.findFirst({
@@ -120,10 +126,16 @@ export const PATCH = async (req: Request, { params }: Params) => {
   const items = hasItems ? body.items : [];
 
   if (!hasItems && (body.status || body.assignedToMemberId !== undefined)) {
-    const allowedStatuses = new Set(["pending", "draft", "sent", "accepted", "declined"]);
-    const updateData: { status?: string; assignedToMemberId?: string | null; sentAt?: null; sentVia?: null } = {};
+    const allowedStatuses = new Set<QuoteStatus>([
+      "pending",
+      "draft",
+      "sent",
+      "accepted",
+      "declined",
+    ]);
+    const updateData: Prisma.QuoteUncheckedUpdateInput = {};
     if (body.status) {
-      const nextStatus = String(body.status);
+      const nextStatus = String(body.status) as QuoteStatus;
       if (!allowedStatuses.has(nextStatus)) {
         return NextResponse.json({ error: "Invalid status" }, { status: 400 });
       }
@@ -164,14 +176,15 @@ export const PATCH = async (req: Request, { params }: Params) => {
           sentVia: null,
         },
       });
-      if (updateData.status === "accepted" && saved.jobId) {
+      const savedJobId = saved.jobId;
+      if (updateData.status === "accepted" && savedJobId) {
         await tx.job.update({
-          where: { id: saved.jobId, orgId },
+          where: { id: savedJobId, orgId },
           data: { status: "in_progress" },
         });
 
         const existingTasks = await tx.jobTask.findMany({
-          where: { orgId, jobId: saved.jobId },
+          where: { orgId, jobId: savedJobId },
           select: { name: true, sourceQuoteId: true },
         });
         const existingKeys = new Set(
@@ -187,7 +200,7 @@ export const PATCH = async (req: Request, { params }: Params) => {
           .filter((item) => !existingKeys.has(`${quoteId}::${item.name}`))
           .map((item, index) => ({
             orgId,
-            jobId: saved.jobId,
+            jobId: savedJobId,
             sourceQuoteId: quoteId,
             name: item.name,
             description: item.description ?? null,
@@ -197,22 +210,22 @@ export const PATCH = async (req: Request, { params }: Params) => {
         if (taskCreates.length) {
           await tx.jobTask.createMany({ data: taskCreates });
         }
-      } else if (saved.jobId) {
+      } else if (savedJobId) {
         const existingTasks = await tx.jobTask.findMany({
-          where: { orgId, jobId: saved.jobId },
+          where: { orgId, jobId: savedJobId },
           select: { id: true },
           take: 1,
         });
         if (!existingTasks.length) {
           const acceptedQuote = await tx.quote.findFirst({
-            where: { orgId, jobId: saved.jobId, status: "accepted" },
+            where: { orgId, jobId: savedJobId, status: "accepted" },
             orderBy: { createdAt: "desc" },
             include: { items: true },
           });
           if (acceptedQuote) {
             const taskCreates = acceptedQuote.items.map((item, index) => ({
               orgId,
-              jobId: saved.jobId,
+              jobId: savedJobId,
               sourceQuoteId: acceptedQuote.id,
               name: item.name,
               description: item.description ?? null,
@@ -325,6 +338,11 @@ export const DELETE = async (_req: Request, { params }: Params) => {
   if (!orgId) {
     return NextResponse.json({ error: "No org selected" }, { status: 400 });
   }
+  const member = await db.orgMember.findFirst({
+    where: { orgId, userId: session.user.id },
+    select: { id: true },
+  });
+  const changedByMemberId = member?.id ?? null;
 
   const quoteId = await getQuoteId(params);
 
@@ -346,6 +364,11 @@ export const POST = async (req: Request, { params }: Params) => {
   if (!orgId) {
     return NextResponse.json({ error: "No org selected" }, { status: 400 });
   }
+  const changedByMember = await db.orgMember.findFirst({
+    where: { orgId, userId: session.user.id },
+    select: { id: true },
+  });
+  const changedByMemberId = changedByMember?.id ?? null;
 
   const quoteId = await getQuoteId(params);
   const body = await req.json().catch(() => ({}));

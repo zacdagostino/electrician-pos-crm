@@ -11,6 +11,7 @@ import { useConfirm } from "@/components/ConfirmProvider";
 type QuoteSummary = {
   id: string;
   customerName: string;
+  customerEmail?: string | null;
   customerId?: string | null;
   siteLine1?: string | null;
   siteLine2?: string | null;

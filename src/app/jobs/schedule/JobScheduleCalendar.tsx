@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import FullCalendar from "@fullcalendar/react";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import dayGridPlugin from "@fullcalendar/daygrid";
-import interactionPlugin, { EventResizeDoneArg, EventDropArg } from "@fullcalendar/interaction";
+import interactionPlugin, { EventResizeDoneArg } from "@fullcalendar/interaction";
+import type { EventDropArg } from "@fullcalendar/core";
 import { useToast } from "@/components/ToastProvider";
 
 type ScheduleJob = {
@@ -196,7 +197,7 @@ export default function JobScheduleCalendar({ jobs, assignees }: JobScheduleCale
       scheduledStart: startValue,
       scheduledEnd: endValue,
       scheduledAllDay: scheduleAllDay,
-      scheduledNotes,
+      scheduledNotes: scheduleNotes,
     });
     if (result.ok) {
       notify({ tone: "success", title: "Job scheduled", message: "Added to calendar." });

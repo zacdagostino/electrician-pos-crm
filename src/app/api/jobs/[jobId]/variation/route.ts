@@ -74,10 +74,15 @@ export const POST = async (_req: Request, { params }: Params) => {
             ? new Prisma.Decimal(baseQuote.minimumChargeAmount)
             : null,
         subtotal:
-          baseQuote.subtotal != null ? new Prisma.Decimal(baseQuote.subtotal) : null,
+          baseQuote.subtotal != null
+            ? new Prisma.Decimal(baseQuote.subtotal)
+            : new Prisma.Decimal(0),
         gstAmount:
-          baseQuote.gstAmount != null ? new Prisma.Decimal(baseQuote.gstAmount) : null,
-        total: baseQuote.total != null ? new Prisma.Decimal(baseQuote.total) : null,
+          baseQuote.gstAmount != null
+            ? new Prisma.Decimal(baseQuote.gstAmount)
+            : new Prisma.Decimal(0),
+        total:
+          baseQuote.total != null ? new Prisma.Decimal(baseQuote.total) : new Prisma.Decimal(0),
         notes: baseQuote.notes,
         sentAt: null,
         sentVia: null,

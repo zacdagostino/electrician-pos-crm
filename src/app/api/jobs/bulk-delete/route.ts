@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { getServerAuthSession } from "@/auth";
 import { getSelectedOrgId } from "@/lib/authz";
 import { db } from "@/lib/db";
@@ -8,7 +9,11 @@ type Payload = {
   deleteLinkedQuotes?: boolean;
 };
 
-const deleteQuotes = async (tx: Parameters<typeof db.$transaction>[0], orgId: string, quoteIds: string[]) => {
+const deleteQuotes = async (
+  tx: Prisma.TransactionClient,
+  orgId: string,
+  quoteIds: string[]
+) => {
   if (!quoteIds.length) return;
   const histories = await tx.quoteHistory.findMany({
     where: { orgId, quoteId: { in: quoteIds } },
