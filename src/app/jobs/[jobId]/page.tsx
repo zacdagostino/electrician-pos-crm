@@ -97,6 +97,12 @@ export default async function JobPage({ params }: JobPageProps) {
               Work instructions
             </a>
             <a
+              href={`/pos?jobId=${job.id}`}
+              className="inline-flex items-center justify-center rounded-lg border border-emerald-400/60 px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300"
+            >
+              Open POS
+            </a>
+            <a
               href={`/jobs/${job.id}/edit`}
               className="inline-flex items-center justify-center rounded-lg border border-emerald-400/60 px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300"
             >
@@ -238,7 +244,7 @@ export default async function JobPage({ params }: JobPageProps) {
                     </p>
                     <div className="mt-4">
                       <AddressCard
-                        label={null}
+                        label={undefined}
                         line1={job.siteLine1}
                         line2={job.siteLine2}
                         suburb={job.siteSuburb}

@@ -5,8 +5,10 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:prod": "prisma generate && prisma migrate deploy && next build",
     "start": "next start",
     "lint": "eslint",
+    "postinstall": "prisma generate",
     "prisma": "prisma",
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate"
@@ -26,6 +28,7 @@
     "prisma": "^6.0.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "stripe": "^20.3.1",
     "tesseract.js": "^7.0.0"
   },
   "devDependencies": {

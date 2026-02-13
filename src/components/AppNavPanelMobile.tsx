@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { usePathname } from "next/navigation";
+import { useState } from "react";
 import AppNav from "@/components/AppNav";
 import RoleIcon from "@/components/RoleIcon";
 
@@ -18,21 +17,7 @@ export default function AppNavPanelMobile({
   orgLogoUrl,
   userRole,
 }: AppNavPanelMobileProps) {
-  const [mounted, setMounted] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
-  const pathname = usePathname();
-
-  useEffect(() => {
-    setIsOpen(false);
-  }, [pathname]);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  if (!mounted) {
-    return null;
-  }
 
   return (
     <>
@@ -130,13 +115,15 @@ export default function AppNavPanelMobile({
               </button>
               <span className="text-xs uppercase tracking-[0.3em] text-slate-500">Menu</span>
             </div>
-            <AppNav
-              userName={userName}
-              orgName={orgName}
-              orgLogoUrl={orgLogoUrl}
-              userRole={userRole}
-              className="h-full w-72 border-r-0"
-            />
+            <div className="min-h-0 flex-1">
+              <AppNav
+                userName={userName}
+                orgName={orgName}
+                orgLogoUrl={orgLogoUrl}
+                userRole={userRole}
+                className="h-full w-72 border-r-0"
+              />
+            </div>
           </div>
         </div>
       </div>

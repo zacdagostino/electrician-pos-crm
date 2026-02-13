@@ -11,7 +11,15 @@ export default async function WorkInstructionsPage() {
     orderBy: { createdAt: "asc" },
   });
   const swis = await db.serviceSWI.findMany({ where: { orgId } });
-  const swiIds = new Set(swis.map((swi) => swi.serviceId));
+  const swiByServiceId = new Map(
+    swis.map((swi) => [
+      swi.serviceId,
+      {
+        hasSwi: true,
+        isDraft: Boolean((swi.content as { meta?: { isDraft?: boolean } })?.meta?.isDraft),
+      },
+    ])
+  );
 
   return (
     <AppShell
@@ -28,7 +36,8 @@ export default async function WorkInstructionsPage() {
           id: service.id,
           name: service.name,
           price: service.price ? service.price.toFixed(2) : null,
-          hasSwi: swiIds.has(service.id),
+          hasSwi: swiByServiceId.get(service.id)?.hasSwi ?? false,
+          isDraft: swiByServiceId.get(service.id)?.isDraft ?? false,
         }))}
       />
     </AppShell>

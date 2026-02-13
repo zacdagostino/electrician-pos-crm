@@ -1,4 +1,4 @@
-import type { OrgRole } from "@prisma/client";
+import { Prisma, type OrgRole } from "@prisma/client";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { getServerAuthSession } from "@/auth";
@@ -13,52 +13,56 @@ export const requireAuth = async () => {
   return session;
 };
 
-export const getSelectedOrgId = async () => {
-  const session = await getServerAuthSession();
-  if (!session?.user?.id) return null;
-
+const getSelectedOrgMembership = async (userId: string) => {
   const cookieStore = await cookies();
   const selectedOrgId = cookieStore.get("org_id")?.value;
   if (!selectedOrgId) return null;
 
-  const membership = await db.orgMember.findFirst({
-    where: {
-      userId: session.user.id,
-      orgId: selectedOrgId,
-      status: "active",
-    },
-  });
-
+  const membership = await withPoolRetry(() =>
+    db.orgMember.findFirst({
+      where: {
+        userId,
+        orgId: selectedOrgId,
+        status: "active",
+      },
+    })
+  );
   if (!membership) return null;
-  return selectedOrgId;
+
+  return { orgId: selectedOrgId, membership };
+};
+
+const withPoolRetry = async <T>(query: () => Promise<T>) => {
+  try {
+    return await query();
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2024") {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      return query();
+    }
+    throw error;
+  }
+};
+
+export const getSelectedOrgId = async () => {
+  const session = await getServerAuthSession();
+  if (!session?.user?.id) return null;
+  const selected = await getSelectedOrgMembership(session.user.id);
+  return selected?.orgId ?? null;
 };
 
 export const requireOrg = async () => {
   const session = await requireAuth();
-  const orgId = await getSelectedOrgId();
-  if (!orgId) {
+  const selected = await getSelectedOrgMembership(session.user.id);
+  if (!selected) {
     redirect("/select-org");
   }
-  const membership = await db.orgMember.findFirst({
-    where: {
-      userId: session.user.id,
-      orgId,
-      status: "active",
-    },
-  });
-  return { session, orgId, membership };
+
+  return { session, orgId: selected.orgId, membership: selected.membership };
 };
 
 export const requireRole = async (requiredRole: OrgRole) => {
-  const { session, orgId } = await requireOrg();
-  const membership = await db.orgMember.findFirst({
-    where: {
-      userId: session.user.id,
-      orgId,
-      status: "active",
-    },
-  });
-
+  const { session, orgId, membership } = await requireOrg();
   if (!membership) {
     redirect("/unauthorized");
   }
@@ -71,15 +75,7 @@ export const requireRole = async (requiredRole: OrgRole) => {
 };
 
 export const requirePermission = async (permission: Permission) => {
-  const { session, orgId } = await requireOrg();
-  const membership = await db.orgMember.findFirst({
-    where: {
-      userId: session.user.id,
-      orgId,
-      status: "active",
-    },
-  });
-
+  const { session, orgId, membership } = await requireOrg();
   if (!membership || !hasPermission(membership.role, permission)) {
     redirect("/unauthorized");
   }

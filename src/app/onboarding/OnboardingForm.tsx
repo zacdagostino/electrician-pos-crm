@@ -19,6 +19,7 @@ export default function OnboardingForm() {
   const [gstPreset, setGstPreset] = useState("0.10");
   const [locationName, setLocationName] = useState("");
   const [locationType, setLocationType] = useState("van");
+  const [posSetupChoice, setPosSetupChoice] = useState<"record_only" | "stripe">("record_only");
   const [loading, setLoading] = useState(false);
   const { notify } = useToast();
 
@@ -35,6 +36,7 @@ export default function OnboardingForm() {
         defaultGstRate: Number(defaultGstRate),
         locationName,
         locationType,
+        posSetupChoice,
       }),
     });
 
@@ -51,15 +53,16 @@ export default function OnboardingForm() {
       return;
     }
 
-    window.location.href = "/dashboard";
+    window.location.href = posSetupChoice === "stripe" ? "/settings/pos" : "/dashboard";
   };
 
-  const totalSteps = 5;
+  const totalSteps = 6;
   const canContinue = () => {
     if (step === 0) return orgName.trim().length > 0;
     if (step === 1) return true;
     if (step === 2) return defaultGstRate.trim().length > 0;
     if (step === 3) return locationName.trim().length > 0;
+    if (step === 4) return true;
     return true;
   };
 
@@ -165,6 +168,38 @@ export default function OnboardingForm() {
       ) : null}
 
       {step === 4 ? (
+        <div className="flex flex-col gap-3 text-sm">
+          <p className="text-sm">How do you want to take POS payments?</p>
+          <button
+            type="button"
+            onClick={() => setPosSetupChoice("record_only")}
+            className={`rounded-lg border px-3 py-2 text-left ${
+              posSetupChoice === "record_only"
+                ? "border-emerald-400 bg-emerald-400/10 text-emerald-100"
+                : "border-slate-800 bg-slate-900 text-slate-200"
+            }`}
+          >
+            <p className="font-semibold">Record payments only</p>
+            <p className="text-xs text-slate-400">Use POS to log paid cash/bank/card manually.</p>
+          </button>
+          <button
+            type="button"
+            onClick={() => setPosSetupChoice("stripe")}
+            className={`rounded-lg border px-3 py-2 text-left ${
+              posSetupChoice === "stripe"
+                ? "border-emerald-400 bg-emerald-400/10 text-emerald-100"
+                : "border-slate-800 bg-slate-900 text-slate-200"
+            }`}
+          >
+            <p className="font-semibold">Take real card payments (Stripe)</p>
+            <p className="text-xs text-slate-400">
+              You&apos;ll finish Stripe keys/webhook in Settings after setup.
+            </p>
+          </button>
+        </div>
+      ) : null}
+
+      {step === 5 ? (
         <label className="flex flex-col gap-2 text-sm">
           Location type
           <SelectMenu

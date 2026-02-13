@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import type { OrgRole, TradeRole } from "@prisma/client";
 import SelectMenu from "@/components/SelectMenu";
 import { useToast } from "@/components/ToastProvider";
 
@@ -8,13 +9,15 @@ type ProfileFormProps = {
   name: string | null;
   email: string;
   phone: string | null;
-  tradeRole: "electrician" | "apprentice" | "office";
+  tradeRole: TradeRole;
+  accessRole: OrgRole;
 };
 
-export default function ProfileForm({ name, email, phone, tradeRole }: ProfileFormProps) {
+export default function ProfileForm({ name, email, phone, tradeRole, accessRole }: ProfileFormProps) {
   const [fullName, setFullName] = useState(name ?? "");
   const [phoneNumber, setPhoneNumber] = useState(phone ?? "");
-  const [role, setRole] = useState<ProfileFormProps["tradeRole"]>(tradeRole);
+  const [role, setRole] = useState<TradeRole>(tradeRole);
+  const [orgRole, setOrgRole] = useState<OrgRole>(accessRole);
   const [saving, setSaving] = useState(false);
   const { notify } = useToast();
 
@@ -29,6 +32,7 @@ export default function ProfileForm({ name, email, phone, tradeRole }: ProfileFo
         name: fullName,
         phone: phoneNumber,
         tradeRole: role,
+        accessRole: orgRole,
       }),
     });
 
@@ -86,6 +90,22 @@ export default function ProfileForm({ name, email, phone, tradeRole }: ProfileFo
             { value: "apprentice", label: "Apprentice" },
             { value: "office", label: "Office / Admin" },
           ]}
+          className="w-full"
+        />
+      </label>
+      <label className="flex flex-col gap-2 text-sm">
+        Access role
+        <SelectMenu
+          value={orgRole}
+          onChange={(value) => setOrgRole(value as OrgRole)}
+          options={
+            accessRole === "owner"
+              ? [{ value: "owner", label: "Owner (full access)" }]
+              : [
+                  { value: "admin", label: "Admin" },
+                  { value: "staff", label: "Staff" },
+                ]
+          }
           className="w-full"
         />
       </label>

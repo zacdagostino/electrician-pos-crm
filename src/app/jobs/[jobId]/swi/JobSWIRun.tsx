@@ -49,6 +49,7 @@ type SWIRunContent = {
       photo?: string;
       testResult?: string;
       notes?: string;
+      checklist?: boolean[];
     }
   >;
   templateId?: string;
@@ -108,8 +109,12 @@ export default function JobSWIRun({ jobId, existing, serviceOptions }: JobSWIRun
     const load = async () => {
       const response = await fetch("/api/work-instructions/library");
       const payload = await response.json().catch(() => ({}));
-      const items = Array.isArray(payload.items) ? payload.items : [];
-      setDefinitions(items.filter((item: any) => item.type === "definition"));
+      const items = Array.isArray(payload.items) ? (payload.items as Array<{ id: string; type: string; name: string; howTo?: string | null }>) : [];
+      setDefinitions(
+        items
+          .filter((item) => item.type === "definition")
+          .map((item) => ({ id: item.id, type: "definition", name: item.name, howTo: item.howTo ?? null }))
+      );
     };
     load();
   }, []);
@@ -129,7 +134,7 @@ export default function JobSWIRun({ jobId, existing, serviceOptions }: JobSWIRun
       }
       setRun(nextRun);
       notify({ tone: "success", title: "SWI saved", message: "Progress updated." });
-    } catch (err) {
+    } catch {
       notify({ tone: "error", title: "Save failed", message: "Unable to save SWI." });
     } finally {
       setSaving(false);
@@ -177,6 +182,47 @@ export default function JobSWIRun({ jobId, existing, serviceOptions }: JobSWIRun
       progress: { ...run.progress, [stepId]: { ...current, ...update } },
     };
     saveRun(nextRun);
+  };
+
+  const updateStep = (stepId: string, update: Partial<SWIStep>) => {
+    if (!run) return;
+    const nextRun: SWIRunContent = {
+      ...run,
+      steps: run.steps.map((step) => (step.id === stepId ? { ...step, ...update } : step)),
+    };
+    saveRun(nextRun);
+  };
+
+  const toggleChecklistItem = (stepId: string, index: number, checked: boolean) => {
+    const current = run?.progress[stepId] ?? { completed: false };
+    const nextChecklist = [...(current.checklist ?? [])];
+    nextChecklist[index] = checked;
+    updateProgress(stepId, { checklist: nextChecklist });
+  };
+
+  const updateChecklistText = (stepId: string, index: number, value: string) => {
+    const step = run?.steps.find((item) => item.id === stepId);
+    if (!step) return;
+    const nextWhatToDo = [...step.whatToDo];
+    nextWhatToDo[index] = value;
+    updateStep(stepId, { whatToDo: nextWhatToDo });
+  };
+
+  const addChecklistItem = (stepId: string) => {
+    const step = run?.steps.find((item) => item.id === stepId);
+    if (!step) return;
+    updateStep(stepId, { whatToDo: [...step.whatToDo, ""] });
+  };
+
+  const removeChecklistItem = (stepId: string, index: number) => {
+    const step = run?.steps.find((item) => item.id === stepId);
+    if (!step) return;
+    const nextWhatToDo = step.whatToDo.filter((_line, itemIndex) => itemIndex !== index);
+    updateStep(stepId, { whatToDo: nextWhatToDo.length ? nextWhatToDo : [""] });
+    const current = run?.progress[stepId] ?? { completed: false };
+    if (current.checklist) {
+      updateProgress(stepId, { checklist: current.checklist.filter((_line, itemIndex) => itemIndex !== index) });
+    }
   };
 
   if (!run) {
@@ -275,11 +321,39 @@ export default function JobSWIRun({ jobId, existing, serviceOptions }: JobSWIRun
 
                   <div className="mt-3 space-y-2 text-xs text-slate-600 dark:text-slate-300">
                     {step.whatToDo.length ? (
-                      <ul className="list-disc space-y-1 pl-4">
+                      <div className="space-y-2">
                         {step.whatToDo.map((line, idx) => (
-                          <li key={idx}>{highlightText(line, definitions)}</li>
+                          <div
+                            key={idx}
+                            className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-2 dark:border-slate-800 dark:bg-slate-950"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={!!progress.checklist?.[idx]}
+                              onChange={(event) => toggleChecklistItem(step.id, idx, event.target.checked)}
+                            />
+                            <input
+                              value={line}
+                              onChange={(event) => updateChecklistText(step.id, idx, event.target.value)}
+                              className="w-full bg-transparent text-xs text-slate-700 outline-none dark:text-slate-200"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => removeChecklistItem(step.id, idx)}
+                              className="rounded border border-slate-200 px-2 py-1 text-[10px] text-slate-500 hover:bg-slate-100 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-900"
+                            >
+                              Remove
+                            </button>
+                          </div>
                         ))}
-                      </ul>
+                        <button
+                          type="button"
+                          onClick={() => addChecklistItem(step.id)}
+                          className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-800 dark:text-slate-200 dark:hover:bg-slate-900"
+                        >
+                          Add checklist item
+                        </button>
+                      </div>
                     ) : null}
                     {step.why ? <p className="text-slate-500">{highlightText(step.why, definitions)}</p> : null}
                   </div>

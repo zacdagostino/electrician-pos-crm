@@ -11,6 +11,7 @@ const navSections = [
     title: "Core",
     items: [
       { href: "/dashboard", label: "Dashboard" },
+      { href: "/pos", label: "POS" },
       { href: "/quotes", label: "Quotes" },
       { href: "/jobs", label: "Jobs" },
       { href: "/clients", label: "Clients" },
@@ -49,7 +50,7 @@ export default function AppNav({ userName, orgName, orgLogoUrl, userRole, classN
 
   return (
     <aside
-      className={`flex h-full flex-col justify-between border-r border-slate-800 bg-slate-950 px-4 py-6 ${
+      className={`flex h-full min-h-0 flex-col overflow-y-auto border-r border-slate-800 bg-slate-950 px-4 py-6 ${
         className ?? ""
       }`}
     >
@@ -116,7 +117,7 @@ export default function AppNav({ userName, orgName, orgLogoUrl, userRole, classN
           ))}
         </nav>
       </div>
-      <div className="space-y-2">
+      <div className="mt-6 space-y-2">
         <ThemeToggle />
         <button
           type="button"

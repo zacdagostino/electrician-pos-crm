@@ -7,6 +7,9 @@ import { useToast } from "@/components/ToastProvider";
 
 type VariationQuotePanelProps = {
   jobId: string;
+  buttonLabel?: string;
+  buttonClassName?: string;
+  containerClassName?: string;
 };
 
 type QuotePayload = {
@@ -32,11 +35,15 @@ type QuotePayload = {
   }>;
 };
 
-export default function VariationQuotePanel({ jobId }: VariationQuotePanelProps) {
+export default function VariationQuotePanel({
+  jobId,
+  buttonLabel = "Add variation",
+  buttonClassName,
+  containerClassName,
+}: VariationQuotePanelProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [quote, setQuote] = useState<QuotePayload | null>(null);
   const [panelQuote, setPanelQuote] = useState<QuotePayload | null>(null);
   const { notify } = useToast();
   const closeTimeoutRef = useRef<number | null>(null);
@@ -66,10 +73,9 @@ export default function VariationQuotePanel({ jobId }: VariationQuotePanelProps)
         return;
       }
 
-      setQuote(quotePayload.quote);
       setPanelQuote(quotePayload.quote);
       setOpen(true);
-    } catch (err) {
+    } catch {
       notify({
         tone: "error",
         title: "Variation failed",
@@ -97,14 +103,17 @@ export default function VariationQuotePanel({ jobId }: VariationQuotePanelProps)
 
   return (
     <>
-      <div className="flex flex-col items-end gap-2">
+      <div className={containerClassName ?? "flex flex-col items-end gap-2"}>
         <button
           type="button"
           onClick={openPanel}
           disabled={loading}
-          className="inline-flex items-center justify-center rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-60 dark:border-slate-800 dark:text-slate-200 dark:hover:bg-slate-900"
+          className={
+            buttonClassName ??
+            "inline-flex items-center justify-center rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-60 dark:border-slate-800 dark:text-slate-200 dark:hover:bg-slate-900"
+          }
         >
-          {loading ? "Creating…" : "Add variation"}
+          {loading ? "Creating…" : buttonLabel}
         </button>
       </div>
 
@@ -144,6 +153,7 @@ export default function VariationQuotePanel({ jobId }: VariationQuotePanelProps)
             <div className="p-6">
               <QuoteBuilder
                 mode="edit"
+                collapseWhoWhereByDefault
                 quoteId={panelQuote.id}
                 initialQuote={{
                   id: panelQuote.id,

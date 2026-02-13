@@ -1,7 +1,8 @@
+import Link from "next/link";
 import AppShell from "@/components/AppShell";
 import { requireOrg } from "@/lib/authz";
 import { db } from "@/lib/db";
-import ServiceSWIBuilder from "@/app/work-instructions/ServiceSWIBuilder";
+import ServiceSWIRunView from "@/app/work-instructions/ServiceSWIRunView";
 
 type PageProps = {
   params: Promise<{ serviceId: string }>;
@@ -38,7 +39,7 @@ type SWIContent = {
   }>;
 };
 
-export default async function ServiceSWIPage({ params }: PageProps) {
+export default async function ServiceSWIRunPage({ params }: PageProps) {
   const { serviceId } = await params;
   const { session, orgId, membership } = await requireOrg();
   const org = await db.org.findUnique({ where: { id: orgId } });
@@ -61,25 +62,47 @@ export default async function ServiceSWIPage({ params }: PageProps) {
   const swi = await db.serviceSWI.findFirst({ where: { orgId, serviceId } });
   const content = (swi?.content as SWIContent | null) ?? null;
 
+  if (!content) {
+    return (
+      <AppShell
+        userName={session.user?.name}
+        orgName={org?.name ?? orgId}
+        orgLogoUrl={org?.logoUrl ?? null}
+        userRole={membership?.tradeRole ?? null}
+        title={`${service.name} SWI Run`}
+        subtitle="Field checklist view"
+        backLink={{ href: "/work-instructions", label: "Back to work instructions" }}
+      >
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            No SWI has been created for this service yet.
+          </p>
+          <Link
+            href={`/work-instructions/${service.id}`}
+            className="mt-4 inline-flex rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-800 dark:text-slate-200 dark:hover:bg-slate-950"
+          >
+            Open editor
+          </Link>
+        </div>
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell
       userName={session.user?.name}
       orgName={org?.name ?? orgId}
       orgLogoUrl={org?.logoUrl ?? null}
       userRole={membership?.tradeRole ?? null}
-      title={`${service.name} SWI`}
-      subtitle="Write plain text work instructions."
+      title={`${service.name} SWI Run`}
+      subtitle="Field checklist view"
       backLink={{ href: "/work-instructions", label: "Back to work instructions" }}
       breadcrumbs={[
         { label: "Work instructions", href: "/work-instructions" },
-        { label: service.name },
+        { label: `${service.name} Run` },
       ]}
     >
-      <ServiceSWIBuilder
-        serviceId={service.id}
-        serviceName={service.name}
-        initialContent={content ?? { meta: { jobName: service.name, classification: "", standards: "", equipment: "", parts: "", whoCanPerform: "", isDraft: true }, phases: [], steps: [] }}
-      />
+      <ServiceSWIRunView serviceId={service.id} serviceName={service.name} content={content} />
     </AppShell>
   );
 }

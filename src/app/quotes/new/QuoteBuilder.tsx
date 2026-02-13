@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import SendQuotePrompt from "@/app/quotes/SendQuotePrompt";
 import { useToast } from "@/components/ToastProvider";
 import { useConfirm } from "@/components/ConfirmProvider";
+import { matchesFuzzy } from "@/lib/fuzzy";
 
 type ServiceItem = {
   id: string;
@@ -89,6 +90,7 @@ const computeTotals = (
 type QuoteBuilderProps = {
   mode?: "new" | "edit";
   quoteId?: string;
+  collapseWhoWhereByDefault?: boolean;
   activeJob?: {
     isActive: boolean;
     jobId?: string | null;
@@ -122,6 +124,7 @@ type QuoteBuilderProps = {
 export default function QuoteBuilder({
   mode = "new",
   quoteId,
+  collapseWhoWhereByDefault = false,
   activeJob,
   initialQuote,
   onSaved,
@@ -199,6 +202,7 @@ export default function QuoteBuilder({
   const [showSendPrompt, setShowSendPrompt] = useState(false);
   const [savedQuoteId, setSavedQuoteId] = useState<string | null>(null);
   const [nowTick, setNowTick] = useState(0); // used to refresh relative time display
+  const [whoWhereOpen, setWhoWhereOpen] = useState(!collapseWhoWhereByDefault);
 
   useEffect(() => {
     const interval = setInterval(() => setNowTick((v) => v + 1), 30000);
@@ -499,43 +503,9 @@ export default function QuoteBuilder({
 
   const availableItems = useMemo(() => {
     if (!profile) return [];
-    const rawSearch = search.toLowerCase().trim();
-    const normalizedSearch = rawSearch.replace(/\s+/g, "");
-    const tokens = rawSearch.split(/\s+/).filter(Boolean);
-
-    const levenshtein = (a: string, b: string) => {
-      const matrix = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
-      for (let i = 0; i <= a.length; i += 1) matrix[i][0] = i;
-      for (let j = 0; j <= b.length; j += 1) matrix[0][j] = j;
-      for (let i = 1; i <= a.length; i += 1) {
-        for (let j = 1; j <= b.length; j += 1) {
-          const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-          matrix[i][j] = Math.min(
-            matrix[i - 1][j] + 1,
-            matrix[i][j - 1] + 1,
-            matrix[i - 1][j - 1] + cost
-          );
-        }
-      }
-      return matrix[a.length][b.length];
-    };
-
-    const fuzzyMatch = (text: string, query: string) => {
-      if (!query) return true;
-      if (text.includes(query)) return true;
-      const distance = levenshtein(text, query);
-      const similarity = 1 - distance / Math.max(text.length, query.length, 1);
-      return similarity >= 0.72;
-    };
-
     return services.filter((item) => {
-        const name = item.name.toLowerCase();
-        const normalizedName = name.replace(/\s+/g, "");
-        if (!rawSearch) return true;
-        if (normalizedName.includes(normalizedSearch)) return true;
-        if (tokens.every((token) => name.includes(token))) return true;
-        return fuzzyMatch(normalizedName, normalizedSearch);
-      });
+      return matchesFuzzy(item.name, search);
+    });
   }, [profile, search, services]);
 
   const extraLineItems = items.flatMap((item) =>
@@ -1442,8 +1412,22 @@ export default function QuoteBuilder({
       <section className="space-y-6">
         <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6">
           <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Step 2</p>
-          <h2 className="mt-2 text-lg font-semibold text-slate-100">Who & where</h2>
-          <div className="mt-4 grid gap-4">
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold text-slate-100">Who & where</h2>
+            <button
+              type="button"
+              onClick={() => setWhoWhereOpen((prev) => !prev)}
+              className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-950"
+            >
+              {whoWhereOpen ? "Collapse" : "Expand"}
+            </button>
+          </div>
+          {!whoWhereOpen ? (
+            <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/40 px-4 py-3 text-sm text-slate-400">
+              Step 2 is collapsed. Expand it when you need to edit customer or site details.
+            </div>
+          ) : (
+            <div className="mt-4 grid gap-4">
             <div className="space-y-2">
               <label className="text-xs uppercase tracking-[0.3em] text-slate-500">
                 Customer
@@ -1695,6 +1679,7 @@ export default function QuoteBuilder({
               Apply travel surcharge
             </label>
           </div>
+          )}
         </div>
 
         <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6">

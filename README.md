@@ -45,6 +45,51 @@ npm run dev
 
 Open http://localhost:3000
 
+## Deploy live (Vercel + Neon + Stripe)
+
+1) Prepare production values
+
+- Production database URL (`DATABASE_URL`) from Neon.
+- Strong auth secret:
+
+```bash
+openssl rand -base64 32
+```
+
+- Stripe live keys:
+  - `STRIPE_SECRET_KEY`
+  - `STRIPE_WEBHOOK_SECRET`
+
+2) Push this repo to GitHub
+
+3) Create a Vercel project and import the repo
+
+4) In Vercel project settings, add env vars:
+
+- `DATABASE_URL`
+- `NEXTAUTH_SECRET`
+- `NEXTAUTH_URL` (set to your final app URL, for example `https://app.yourdomain.com`)
+- `STRIPE_SECRET_KEY`
+- `STRIPE_WEBHOOK_SECRET`
+- Any optional vars you use (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `OPENAI_API_KEY`, etc.)
+
+5) Set build command in Vercel to run migrations on deploy:
+
+```bash
+npm run build:prod
+```
+
+6) In Stripe dashboard, create webhook endpoint:
+
+- URL: `https://YOUR_DOMAIN/api/stripe/webhook`
+- Event: `checkout.session.completed`
+- Copy webhook signing secret into `STRIPE_WEBHOOK_SECRET` in Vercel env vars.
+
+7) Redeploy
+
+- After deploy, open `/settings/pos` and confirm Stripe shows as configured.
+- Then test `/pos` with a real or Stripe test card.
+
 ## Notes
 
 - Org selection is stored in an `org_id` cookie after verification.
