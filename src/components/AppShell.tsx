@@ -34,7 +34,7 @@ export default function AppShell({
           orgLogoUrl={orgLogoUrl}
           userRole={userRole}
         />
-        <section className="px-6 py-8 lg:py-10">
+        <section className="px-3 py-6 sm:px-6 sm:py-8 lg:py-10">
           {(title || subtitle || breadcrumbs?.length || backLink) ? (
             <header className="mb-8 space-y-2">
               {(backLink || breadcrumbs?.length) ? (

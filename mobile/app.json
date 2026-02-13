@@ -1,0 +1,34 @@
+{
+  "expo": {
+    "name": "SparkDesk Mobile",
+    "slug": "sparkdesk-mobile",
+    "scheme": "sparkdesk",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.sparkdesk.mobile",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "com.sparkdesk.mobile"
+    },
+    "plugins": [
+      [
+        "@stripe/stripe-terminal-react-native",
+        {
+          "tapToPayCheck": true,
+          "locationWhenInUsePermission": "Location access is required to find payment readers."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "7277256e-3ecb-4896-be89-ff71b7205e0d"
+      }
+    }
+  }
+}

@@ -21,12 +21,12 @@ export default function AppNavPanelMobile({
 
   return (
     <>
-      <div className="flex items-center gap-4 border-b border-slate-800 bg-slate-950 px-6 py-4 lg:hidden">
+      <div className="flex items-center gap-4 border-b border-slate-200 bg-white px-6 py-4 text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 lg:hidden">
         <button
           type="button"
           onClick={() => setIsOpen(true)}
           aria-label="Open menu"
-          className="rounded-lg border border-slate-800 p-2 text-slate-200 hover:bg-slate-900"
+          className="rounded-lg border border-slate-300 p-2 text-slate-700 hover:bg-slate-100 dark:border-slate-800 dark:text-slate-200 dark:hover:bg-slate-900"
         >
           <svg
             aria-hidden="true"
@@ -47,20 +47,20 @@ export default function AppNavPanelMobile({
             <img
               src={orgLogoUrl}
               alt={`${orgName ?? "Workspace"} logo`}
-              className="h-12 w-12 rounded-xl border border-slate-800 bg-slate-900 object-cover"
+              className="h-12 w-12 rounded-xl border border-slate-200 bg-slate-100 object-cover dark:border-slate-800 dark:bg-slate-900"
             />
           ) : null}
           <div className="min-w-0">
-            <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Electrician POS</p>
-            <div className="flex items-center gap-2">
-              <p className="truncate text-sm font-semibold text-slate-100">
-                {orgName ?? "Workspace"}
-              </p>
+              <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Electrician POS</p>
+              <div className="flex items-center gap-2">
+                <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  {orgName ?? "Workspace"}
+                </p>
               {userRole ? (
                 <RoleIcon role={userRole} className="h-3.5 w-3.5 text-slate-400" />
               ) : null}
             </div>
-            <p className="truncate text-[11px] text-slate-400">
+            <p className="truncate text-[11px] text-slate-500 dark:text-slate-400">
               {userName ? (
                 <span className="inline-flex items-center gap-1">
                   {userRole ? <RoleIcon role={userRole} className="h-3 w-3" /> : null}
@@ -83,7 +83,7 @@ export default function AppNavPanelMobile({
           type="button"
           aria-label="Close navigation"
           onClick={() => setIsOpen(false)}
-          className={`absolute inset-0 bg-slate-950/70 transition ${
+          className={`absolute inset-0 bg-slate-950/60 transition ${
             isOpen ? "opacity-100" : "opacity-0"
           }`}
         />
@@ -93,12 +93,12 @@ export default function AppNavPanelMobile({
           }`}
         >
           <div className="flex h-full flex-col">
-            <div className="flex items-center justify-between border-b border-slate-800 bg-slate-950 px-4 py-3">
+            <div className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-950">
               <button
                 type="button"
                 onClick={() => setIsOpen(false)}
                 aria-label="Close menu"
-                className="rounded-md border border-slate-800 p-1.5 text-slate-200 transition hover:bg-slate-900"
+                className="rounded-md border border-slate-300 p-1.5 text-slate-700 transition hover:bg-slate-100 dark:border-slate-800 dark:text-slate-200 dark:hover:bg-slate-900"
               >
                 <svg
                   aria-hidden="true"

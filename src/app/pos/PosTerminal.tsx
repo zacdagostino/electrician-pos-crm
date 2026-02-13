@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useToast } from "@/components/ToastProvider";
 import VariationQuotePanel from "@/components/VariationQuotePanel";
+import ThemeToggle from "@/components/ThemeToggle";
 
 type SaleItem = {
   id: string;
@@ -93,6 +94,7 @@ export default function PosTerminal({
   const [paymentMethod, setPaymentMethod] = useState<"card" | "cash" | "bank_transfer" | "other">("card");
   const [saving, setSaving] = useState(false);
   const [savingMode, setSavingMode] = useState<"paid" | "draft" | null>(null);
+  const [launchingTapPay, setLaunchingTapPay] = useState(false);
   const [statusUpdatingSaleId, setStatusUpdatingSaleId] = useState<string | null>(null);
   const [lines, setLines] = useState<LineDraft[]>([
     { id: crypto.randomUUID(), serviceId: null, name: "", quantity: "1", unitPrice: "" },
@@ -286,6 +288,93 @@ export default function PosTerminal({
     }
   };
 
+  const startTapToPayOnPhone = async () => {
+    if (!selectedJob) {
+      notify({ tone: "error", title: "Select a job", message: "Choose a job before launching Tap to Pay." });
+      return;
+    }
+    if (!stripeReady) {
+      notify({
+        tone: "error",
+        title: "Stripe setup required",
+        message: "Configure Stripe first in Settings → POS setup to use Tap to Pay.",
+      });
+      return;
+    }
+
+    const payloadItems = lines
+      .map((line) => ({
+        serviceId: line.serviceId,
+        name: line.name.trim(),
+        quantity: Number(line.quantity),
+        unitPrice: Number(line.unitPrice),
+      }))
+      .filter((line) => line.name.length);
+
+    if (!payloadItems.length) {
+      notify({ tone: "error", title: "Missing items", message: "Add at least one line item." });
+      return;
+    }
+    if (payloadItems.some((line) => !Number.isFinite(line.quantity) || line.quantity <= 0)) {
+      notify({ tone: "error", title: "Invalid quantity", message: "All quantities must be greater than 0." });
+      return;
+    }
+    if (payloadItems.some((line) => !Number.isFinite(line.unitPrice) || line.unitPrice < 0)) {
+      notify({ tone: "error", title: "Invalid price", message: "All prices must be 0 or greater." });
+      return;
+    }
+
+    setLaunchingTapPay(true);
+    try {
+      const saleResponse = await fetch("/api/pos/sales", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobId: selectedJobId || null,
+          customerId: selectedJob.customerId,
+          customerName: selectedJob.customerName,
+          customerEmail: selectedJob.customerEmail,
+          customerPhone: selectedJob.customerPhone,
+          paymentMethod: "card",
+          status: "draft",
+          reference: null,
+          notes,
+          items: payloadItems,
+        }),
+      });
+      const salePayload = await saleResponse.json().catch(() => ({}));
+      if (!saleResponse.ok) {
+        notify({ tone: "error", title: "Could not start Tap to Pay", message: salePayload.error ?? "Unable to create draft sale." });
+        return;
+      }
+
+      const draftSale = salePayload.sale as SaleSummary;
+      setSales((current) => [draftSale, ...current]);
+
+      const handoffResponse = await fetch("/api/terminal/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ saleId: draftSale.id }),
+      });
+      const handoffPayload = await handoffResponse.json().catch(() => ({}));
+      if (!handoffResponse.ok || !handoffPayload.deepLink) {
+        notify({
+          tone: "error",
+          title: "Handoff failed",
+          message: handoffPayload.error ?? "Draft created, but could not open mobile Tap to Pay.",
+        });
+        return;
+      }
+
+      const deepLink = String(handoffPayload.deepLink);
+      window.location.href = deepLink;
+    } catch {
+      notify({ tone: "error", title: "Could not start Tap to Pay", message: "Please try again." });
+    } finally {
+      setLaunchingTapPay(false);
+    }
+  };
+
   const updateSaleStatus = async (saleId: string, action: "mark_paid" | "void" | "refund") => {
     setStatusUpdatingSaleId(saleId);
     try {
@@ -325,8 +414,11 @@ export default function PosTerminal({
   return (
     <div className="space-y-6">
       <section className="grid gap-6 xl:grid-cols-[2fr_1fr]">
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100">
-          <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Charge customer</p>
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 sm:p-6">
+          <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
+            <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Charge customer</p>
+            <ThemeToggle className="w-auto border-slate-300 px-2.5 py-1.5 text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-900" />
+          </div>
           <div className="mt-4 grid gap-4 lg:grid-cols-[1.3fr_1fr]">
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950/60">
               {!jobPickerOpen && selectedJob ? (
@@ -348,7 +440,7 @@ export default function PosTerminal({
                       Open job
                     </p>
                   </a>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
                       onClick={() => setJobPickerOpen(true)}
@@ -540,7 +632,73 @@ export default function PosTerminal({
             className="mt-3 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
           />
 
-          <div className="mt-5 overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+          <div className="mt-5 space-y-3 md:hidden">
+            {lines.map((line) => {
+              const quantity = Number(line.quantity || 0);
+              const unitPrice = Number(line.unitPrice || 0);
+              const lineTotal = Number.isFinite(quantity) && Number.isFinite(unitPrice) ? quantity * unitPrice : 0;
+              return (
+                <div key={line.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950/60">
+                  <div className="space-y-2">
+                    <input
+                      value={line.name}
+                      onChange={(event) =>
+                        setLines((current) =>
+                          current.map((item) => (item.id === line.id ? { ...item, name: event.target.value } : item))
+                        )
+                      }
+                      placeholder="Item or service"
+                      className="w-full rounded-md border border-slate-200 bg-white px-2 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+                    />
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        value={line.quantity}
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        onChange={(event) =>
+                          setLines((current) =>
+                            current.map((item) =>
+                              item.id === line.id ? { ...item, quantity: event.target.value } : item
+                            )
+                          )
+                        }
+                        className="w-full rounded-md border border-slate-200 bg-white px-2 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+                        placeholder="Qty"
+                      />
+                      <input
+                        value={line.unitPrice}
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        onChange={(event) =>
+                          setLines((current) =>
+                            current.map((item) =>
+                              item.id === line.id ? { ...item, unitPrice: event.target.value } : item
+                            )
+                          )
+                        }
+                        className="w-full rounded-md border border-slate-200 bg-white px-2 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+                        placeholder="Unit"
+                      />
+                    </div>
+                  </div>
+                  <div className="mt-3 flex items-center justify-between">
+                    <p className="text-sm font-semibold">{formatCurrency(lineTotal)}</p>
+                    <button
+                      type="button"
+                      onClick={() => setLines((current) => current.filter((item) => item.id !== line.id))}
+                      className="rounded-md border border-rose-300 px-2 py-1 text-xs text-rose-700 hover:bg-rose-50 dark:border-rose-500/50 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="mt-5 hidden overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800 md:block">
             <table className="w-full min-w-[640px] text-left text-sm">
               <thead className="bg-slate-50 text-xs uppercase tracking-[0.2em] text-slate-500 dark:bg-slate-950">
                 <tr>
@@ -629,7 +787,7 @@ export default function PosTerminal({
 
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 sm:p-6">
           <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Totals</p>
           <div className="mt-4 space-y-2 text-sm">
             <div className="flex items-center justify-between">
@@ -646,6 +804,15 @@ export default function PosTerminal({
             </div>
           </div>
           <div className="mt-5 grid gap-2">
+            <button
+              type="button"
+              onClick={startTapToPayOnPhone}
+              disabled={launchingTapPay || saving || !stripeReady}
+              className="w-full rounded-lg border border-indigo-500/60 bg-indigo-500/10 px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-60 dark:text-indigo-300"
+            >
+              {launchingTapPay ? "Opening app..." : "Tap to Pay on phone"}
+            </button>
+            <p className="text-center text-[11px] text-slate-500">Creates a draft sale and opens SparkDesk mobile app.</p>
             <button
               type="button"
               onClick={() => createSale("paid")}
@@ -673,13 +840,89 @@ export default function PosTerminal({
         </div>
       </section>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100">
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 sm:p-6">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-lg font-semibold">Recent POS sales</h2>
           <span className="text-xs text-slate-500">{sales.length} shown</span>
         </div>
         {sales.length ? (
-          <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+          <>
+          <div className="mt-4 space-y-3 md:hidden">
+            {sales.map((sale) => (
+              <div key={sale.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950/60">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-xs text-slate-500">{new Date(sale.createdAt).toLocaleString()}</p>
+                    <p className="text-sm font-semibold">{sale.customerName}</p>
+                    <p className="text-xs text-slate-500">
+                      {sale.jobId ? sale.jobTitle ?? "Linked job" : "No linked job"}
+                    </p>
+                  </div>
+                  <span className="text-sm font-semibold">{formatCurrency(sale.total)}</span>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-1">
+                  <span className="text-xs text-slate-600 dark:text-slate-300">
+                    {sale.paymentMethod.replace("_", " ")}
+                  </span>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] ${
+                      sale.status === "paid"
+                        ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+                        : sale.status === "refunded"
+                          ? "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+                          : sale.status === "draft"
+                            ? "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
+                            : "bg-slate-200 text-slate-700 dark:bg-slate-700/60 dark:text-slate-200"
+                    }`}
+                  >
+                    {sale.status}
+                  </span>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <a
+                    href={`/api/pos/sales/${sale.id}/receipt`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-md border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-950"
+                  >
+                    Receipt
+                  </a>
+                  {sale.status === "draft" ? (
+                    <button
+                      type="button"
+                      onClick={() => updateSaleStatus(sale.id, "mark_paid")}
+                      disabled={statusUpdatingSaleId === sale.id}
+                      className="rounded-md border border-emerald-500/60 px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-60 dark:text-emerald-300 dark:hover:bg-emerald-950/30"
+                    >
+                      Mark paid
+                    </button>
+                  ) : null}
+                  {userCanManageRefunds && sale.status !== "void" ? (
+                    <button
+                      type="button"
+                      onClick={() => updateSaleStatus(sale.id, "void")}
+                      disabled={statusUpdatingSaleId === sale.id || sale.status === "refunded"}
+                      className="rounded-md border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-60 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-950"
+                    >
+                      Void
+                    </button>
+                  ) : null}
+                  {userCanManageRefunds && sale.status === "paid" ? (
+                    <button
+                      type="button"
+                      onClick={() => updateSaleStatus(sale.id, "refund")}
+                      disabled={statusUpdatingSaleId === sale.id}
+                      className="rounded-md border border-rose-300 px-2 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-60 dark:border-rose-500/50 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                    >
+                      Refund
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 hidden overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800 md:block">
             <table className="w-full min-w-[900px] text-left text-sm">
               <thead className="bg-slate-50 text-xs uppercase tracking-[0.2em] text-slate-500 dark:bg-slate-950">
                 <tr>
@@ -783,6 +1026,7 @@ export default function PosTerminal({
               </tbody>
             </table>
           </div>
+          </>
         ) : (
           <p className="mt-4 text-sm text-slate-500">No POS sales yet.</p>
         )}

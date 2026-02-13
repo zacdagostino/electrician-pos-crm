@@ -8,7 +8,15 @@ import { db } from "@/lib/db";
 
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(db),
-  session: { strategy: "jwt" },
+  session: {
+    strategy: "jwt",
+    // Keep users signed in on mobile/webview across app restarts.
+    maxAge: 60 * 60 * 24 * 30,
+    updateAge: 60 * 60 * 24,
+  },
+  jwt: {
+    maxAge: 60 * 60 * 24 * 30,
+  },
   secret: process.env.NEXTAUTH_SECRET,
   pages: {
     signIn: "/login",
