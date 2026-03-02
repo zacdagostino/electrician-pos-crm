@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { type PosSaleStatus } from "@prisma/client";
 import { db } from "@/lib/db";
-import { getStripeClient } from "@/lib/stripe";
+import { calculatePlatformFeeAmount, getPlatformFeePercent, getStripeClient } from "@/lib/stripe";
 import { requireTerminalSalesPermission } from "@/lib/terminalAuth";
 
 export const POST = async (req: Request) => {
@@ -45,6 +45,22 @@ export const POST = async (req: Request) => {
   if (!Number.isFinite(amount) || amount <= 0) {
     return NextResponse.json({ error: "Sale total must be greater than 0." }, { status: 400 });
   }
+  const org = await db.org.findUnique({
+    where: { id: orgId },
+    select: { stripeAccountId: true, stripeChargesEnabled: true, stripePayoutsEnabled: true },
+  });
+  if (!org?.stripeAccountId) {
+    return NextResponse.json(
+      { error: "Stripe Connect account is not linked. Go to Settings → POS setup and connect Stripe." },
+      { status: 400 }
+    );
+  }
+  if (!org.stripeChargesEnabled || !org.stripePayoutsEnabled) {
+    return NextResponse.json(
+      { error: "Stripe Connect onboarding is incomplete. Finish setup in Settings → POS setup." },
+      { status: 400 }
+    );
+  }
 
   const stripe = getStripeClient();
   const paymentIntent = await stripe.paymentIntents.create({
@@ -56,9 +72,15 @@ export const POST = async (req: Request) => {
       saleId: sale.id,
       orgId,
       source: "sparkdesk_terminal",
+      connectedAccountId: org.stripeAccountId,
+      platformFeePercent: String(getPlatformFeePercent()),
     },
     description: `SparkDesk POS sale ${sale.id} (${sale.customerName})`,
     receipt_email: sale.customerEmail ?? undefined,
+    transfer_data: {
+      destination: org.stripeAccountId,
+    },
+    application_fee_amount: calculatePlatformFeeAmount(amount),
   });
 
   await db.posSale.update({

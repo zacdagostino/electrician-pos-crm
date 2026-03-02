@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Linking as NativeLinking,
   NativeModules,
+  Platform,
   SafeAreaView,
   StyleSheet,
   Text,
@@ -158,12 +159,31 @@ export default function App() {
   };
 
   const showTapToPay = Boolean(handoff);
+  const isWeb = Platform.OS === "web";
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style={showTapToPay ? "light" : "dark"} />
 
       {!showTapToPay ? (
+        isWeb ? (
+          <View style={styles.webFallbackWrap}>
+            <Text style={styles.webFallbackTitle}>Web Preview Mode</Text>
+            <Text style={styles.webFallbackText}>
+              The in-app web shell uses native WebView and runs on iOS/Android builds only.
+            </Text>
+            <TouchableOpacity
+              style={styles.webFallbackButton}
+              onPress={() => {
+                if (typeof window !== "undefined") {
+                  window.open(API_BASE_URL, "_blank", "noopener,noreferrer");
+                }
+              }}
+            >
+              <Text style={styles.webFallbackButtonText}>Open SparkDesk Website</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
         <View style={styles.webviewWrap}>
           <WebView
             source={{ uri: API_BASE_URL }}
@@ -181,6 +201,7 @@ export default function App() {
             onShouldStartLoadWithRequest={(request) => handleWebViewRequest(request.url)}
           />
         </View>
+        )
       ) : (
         <View style={styles.tapContainer}>
           <View style={styles.topBar}>
@@ -350,6 +371,37 @@ const styles = StyleSheet.create({
   webview: {
     flex: 1,
     backgroundColor: "#0b1220",
+  },
+  webFallbackWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    paddingHorizontal: 24,
+    backgroundColor: "#0b1220",
+  },
+  webFallbackTitle: {
+    color: "#f8fafc",
+    fontSize: 20,
+    fontWeight: "700",
+  },
+  webFallbackText: {
+    color: "#cbd5e1",
+    fontSize: 14,
+    textAlign: "center",
+    lineHeight: 20,
+  },
+  webFallbackButton: {
+    marginTop: 6,
+    borderRadius: 10,
+    backgroundColor: "#22c55e",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  webFallbackButtonText: {
+    color: "#052e16",
+    fontSize: 14,
+    fontWeight: "700",
   },
   tapContainer: {
     flex: 1,

@@ -118,7 +118,12 @@ export default async function PosPage({ searchParams }: PosPageProps) {
   const initialJob = requestedJobId
     ? jobs.find((job) => job.id === requestedJobId) ?? null
     : null;
-  const stripeReady = Boolean(process.env.STRIPE_SECRET_KEY) && Boolean(process.env.STRIPE_WEBHOOK_SECRET);
+  const stripeReady =
+    Boolean(process.env.STRIPE_SECRET_KEY) &&
+    Boolean(process.env.STRIPE_WEBHOOK_SECRET) &&
+    Boolean(org?.stripeAccountId) &&
+    Boolean(org?.stripeChargesEnabled) &&
+    Boolean(org?.stripePayoutsEnabled);
   const posSaleModel = (
     db as unknown as {
       posSale?: { findMany: (args: unknown) => Promise<unknown[]> };

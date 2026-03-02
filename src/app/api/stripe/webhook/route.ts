@@ -45,6 +45,17 @@ export const POST = async (req: Request) => {
     }
   }
 
+  if (event.type === "account.updated") {
+    const account = event.data.object as Stripe.Account;
+    await db.org.updateMany({
+      where: { stripeAccountId: account.id },
+      data: {
+        stripeDetailsSubmitted: Boolean(account.details_submitted),
+        stripeChargesEnabled: Boolean(account.charges_enabled),
+        stripePayoutsEnabled: Boolean(account.payouts_enabled),
+      },
+    });
+  }
+
   return NextResponse.json({ received: true });
 };
-

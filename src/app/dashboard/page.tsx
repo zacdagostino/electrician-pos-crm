@@ -13,7 +13,12 @@ export default async function DashboardPage() {
   ]);
   const stripeSecretConfigured = Boolean(process.env.STRIPE_SECRET_KEY);
   const stripeWebhookConfigured = Boolean(process.env.STRIPE_WEBHOOK_SECRET);
-  const stripeReady = stripeSecretConfigured && stripeWebhookConfigured;
+  const stripeReady =
+    stripeSecretConfigured &&
+    stripeWebhookConfigured &&
+    Boolean(org?.stripeAccountId) &&
+    Boolean(org?.stripeChargesEnabled) &&
+    Boolean(org?.stripePayoutsEnabled);
   const setupChecks = [
     {
       label: "Pricing profile configured",

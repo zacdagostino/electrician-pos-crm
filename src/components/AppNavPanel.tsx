@@ -1,5 +1,5 @@
 import AppNav from "@/components/AppNav";
-import AppNavPanelMobile from "@/components/AppNavPanelMobile";
+import AppNavPanelMobileClient from "@/components/AppNavPanelMobileClient";
 
 type AppNavPanelProps = {
   userName?: string | null;
@@ -11,7 +11,7 @@ type AppNavPanelProps = {
 export default function AppNavPanel({ userName, orgName, orgLogoUrl, userRole }: AppNavPanelProps) {
   return (
     <div className="flex flex-col lg:h-full lg:min-h-0">
-      <AppNavPanelMobile
+      <AppNavPanelMobileClient
         userName={userName}
         orgName={orgName}
         orgLogoUrl={orgLogoUrl}

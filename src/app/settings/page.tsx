@@ -1,15 +1,37 @@
 import AppShell from "@/components/AppShell";
+import { Prisma } from "@prisma/client";
 import { requireOrg } from "@/lib/authz";
 import { db } from "@/lib/db";
 
 export default async function SettingsPage() {
   const { session, orgId, membership } = await requireOrg();
+  let messengerIntegration: { id: string } | null = null;
   const [org, user] = await Promise.all([
     db.org.findUnique({ where: { id: orgId } }),
     db.user.findUnique({ where: { id: session.user.id } }),
   ]);
+  try {
+    messengerIntegration = await db.messengerIntegration.findFirst({
+      where: { orgId, channel: "facebook_messenger", active: true },
+      select: { id: true },
+    });
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      (error.code === "P2021" || error.code === "P2022")
+    ) {
+      messengerIntegration = null;
+    } else {
+      throw error;
+    }
+  }
 
-  const stripeReady = Boolean(process.env.STRIPE_SECRET_KEY) && Boolean(process.env.STRIPE_WEBHOOK_SECRET);
+  const stripeReady =
+    Boolean(process.env.STRIPE_SECRET_KEY) &&
+    Boolean(process.env.STRIPE_WEBHOOK_SECRET) &&
+    Boolean(org?.stripeAccountId) &&
+    Boolean(org?.stripeChargesEnabled) &&
+    Boolean(org?.stripePayoutsEnabled);
 
   const settingsItems = [
     {
@@ -57,6 +79,18 @@ export default async function SettingsPage() {
       icon: (
         <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
           <path d="M10 10a4 4 0 100-8 4 4 0 000 8zm0 2c-3.5 0-7 1.75-7 4v1h14v-1c0-2.25-3.5-4-7-4z" />
+        </svg>
+      ),
+    },
+    {
+      id: "messaging",
+      title: "Messaging",
+      description: "Connect Facebook Messenger with AI draft and auto-reply options.",
+      href: "/settings/messaging",
+      ready: Boolean(messengerIntegration),
+      icon: (
+        <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+          <path d="M2.5 5A2.5 2.5 0 015 2.5h10A2.5 2.5 0 0117.5 5v6A2.5 2.5 0 0115 13.5H9.7L6 17v-3.5H5A2.5 2.5 0 012.5 11V5zm4.2 2.3a.8.8 0 00-1.4.5v.4a.8.8 0 001.4.5l1.4-1.5 1.7 1.7a.8.8 0 001.2 0l2-2.2a.8.8 0 10-1.2-1.1l-1.4 1.5-1.7-1.7a.8.8 0 00-1.2 0L6.7 7.3z" />
         </svg>
       ),
     },

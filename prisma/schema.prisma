@@ -89,6 +89,22 @@ enum SWILibraryType {
   definition
 }
 
+enum MessagingChannel {
+  facebook_messenger
+}
+
+enum MessagingMessageDirection {
+  inbound
+  outbound
+}
+
+enum MessagingMessageStatus {
+  received
+  draft
+  sent
+  failed
+}
+
 model User {
   id           String       @id @default(cuid())
   email        String       @unique
@@ -111,6 +127,10 @@ model Org {
   abn            String?
   defaultGstRate Decimal      @default(0.10) @db.Decimal(4, 2)
   logoUrl        String?
+  stripeAccountId String?
+  stripeDetailsSubmitted Boolean @default(false)
+  stripeChargesEnabled Boolean @default(false)
+  stripePayoutsEnabled Boolean @default(false)
   createdAt      DateTime     @default(now())
 
   members        OrgMember[]
@@ -135,6 +155,9 @@ model Org {
   serviceSwis    ServiceSWI[]
   swiLibraryItems SWILibraryItem[]
   posSales       PosSale[]
+  messengerIntegrations MessengerIntegration[]
+  messengerThreads MessengerThread[]
+  messengerMessages MessengerMessage[]
 }
 
 model OrgMember {
@@ -550,6 +573,74 @@ model JobTask {
   @@index([jobId])
   @@index([sourceQuoteId])
   @@index([completedByMemberId])
+}
+
+model MessengerIntegration {
+  id                    String   @id @default(cuid())
+  orgId                 String
+  channel               MessagingChannel @default(facebook_messenger)
+  pageId                String
+  pageName              String
+  pageAccessToken       String
+  reviewBeforeSend      Boolean  @default(true)
+  autoReplyEnabled      Boolean  @default(false)
+  active                Boolean  @default(true)
+  lastWebhookAt         DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  org Org @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  threads MessengerThread[]
+  messages MessengerMessage[]
+
+  @@unique([orgId, channel])
+  @@unique([channel, pageId])
+  @@index([orgId])
+}
+
+model MessengerThread {
+  id                    String   @id @default(cuid())
+  orgId                 String
+  integrationId         String
+  channel               MessagingChannel @default(facebook_messenger)
+  externalUserId        String
+  externalUserName      String?
+  lastMessageAt         DateTime @default(now())
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  org Org @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  integration MessengerIntegration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  messages MessengerMessage[]
+
+  @@unique([integrationId, externalUserId])
+  @@index([orgId, lastMessageAt])
+  @@index([integrationId])
+}
+
+model MessengerMessage {
+  id                    String   @id @default(cuid())
+  orgId                 String
+  integrationId         String
+  threadId              String
+  channel               MessagingChannel @default(facebook_messenger)
+  direction             MessagingMessageDirection
+  status                MessagingMessageStatus
+  externalMessageId     String?
+  body                  String
+  aiModel               String?
+  aiReason              String?
+  error                 String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  org Org @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  integration MessengerIntegration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  thread MessengerThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, createdAt])
+  @@index([threadId, createdAt])
+  @@index([integrationId])
 }
 
 model Quote {

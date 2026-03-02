@@ -4,7 +4,7 @@ import { getServerAuthSession } from "@/auth";
 import { getSelectedOrgId } from "@/lib/authz";
 import { db } from "@/lib/db";
 import { hasPermission, type Permission } from "@/lib/permissions";
-import { getStripeClient } from "@/lib/stripe";
+import { calculatePlatformFeeAmount, getPlatformFeePercent, getStripeClient } from "@/lib/stripe";
 
 const validPaymentMethods = new Set<PosPaymentMethod>(["card", "cash", "bank_transfer", "other"]);
 const parseOptionalText = (value: unknown) => {
@@ -141,8 +141,26 @@ export const POST = async (req: Request) => {
   const total = Number(items.reduce((sum, item) => sum + item.lineTotal, 0).toFixed(2));
   const org = await db.org.findUnique({
     where: { id: orgId },
-    select: { defaultGstRate: true },
+    select: {
+      defaultGstRate: true,
+      stripeAccountId: true,
+      stripeDetailsSubmitted: true,
+      stripeChargesEnabled: true,
+      stripePayoutsEnabled: true,
+    },
   });
+  if (!org?.stripeAccountId) {
+    return NextResponse.json(
+      { error: "Stripe Connect account is not linked. Go to Settings → POS setup and connect Stripe." },
+      { status: 400 }
+    );
+  }
+  if (!org.stripeChargesEnabled || !org.stripePayoutsEnabled) {
+    return NextResponse.json(
+      { error: "Stripe Connect onboarding is incomplete. Finish setup in Settings → POS setup." },
+      { status: 400 }
+    );
+  }
   const gstRate = org?.defaultGstRate != null ? Number(org.defaultGstRate) : 0.1;
   const gstAmount = Number((total * (gstRate / (1 + gstRate))).toFixed(2));
   const subtotal = Number((total - gstAmount).toFixed(2));
@@ -209,6 +227,8 @@ export const POST = async (req: Request) => {
 
   const stripe = getStripeClient();
   const origin = new URL(req.url).origin;
+  const amountCents = Math.round(total * 100);
+  const applicationFeeAmount = calculatePlatformFeeAmount(amountCents);
   const checkout = await stripe.checkout.sessions.create({
     mode: "payment",
     success_url: `${origin}/pos?checkout=success`,
@@ -229,6 +249,18 @@ export const POST = async (req: Request) => {
         },
       },
     })),
+    payment_intent_data: {
+      transfer_data: {
+        destination: org.stripeAccountId,
+      },
+      application_fee_amount: applicationFeeAmount,
+      metadata: {
+        saleId: sale.id,
+        orgId,
+        connectedAccountId: org.stripeAccountId,
+        platformFeePercent: String(getPlatformFeePercent()),
+      },
+    },
   });
 
   if (posSaleModel.update) {
